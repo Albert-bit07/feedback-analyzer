@@ -1,3 +1,5 @@
+> Historical audit: see the [README](../README.md) for current fixes and test status.
+
 # 90-second local demonstration
 
 **Status:** recording script, not a verified recording. No screenshot or output is fabricated. Use only seeded examples in a fresh disposable checkout; do not seed a shared service.

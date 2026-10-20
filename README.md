@@ -22,7 +22,7 @@ flowchart TD
   B[Browser dashboard] -->|JSON requests| W[Worker router]
   W -->|summary cache| K[(KV)]
   W -->|SQL queries| D[(D1 feedback table)]
-  W -->|sentiment and insights| A[Workers AI]
+  W -->|insights| A[Workers AI]
   W -->|HTML and JSON| B
 ```
 
@@ -55,22 +55,22 @@ The committed [Wrangler configuration](wrangler.jsonc) refers to the author's re
 | `/api/ai-insights` | Summary of up to 20 recent entries | 600 s on success |
 | `/api/seed` | Removed; returns 404 | Use local SQL fixtures |
 
-Routes other than OPTIONS are selected by path, without HTTP-method enforcement. There is no general feedback ingestion, login, resolution or deletion endpoint. The schema contains fields not exposed as workflows.
+API reads require GET; OPTIONS handles preflight. There is no general feedback ingestion, login, resolution or deletion endpoint. The schema contains fields not exposed as workflows.
 
 ## Engineering decisions and limitations
 
 D1 supports grouping, ordering and reporter history without scanning all rows in application code. KV trades freshness for fewer repeated queries; no benchmark establishes a latency improvement. The previous README's 400 ms/75 ms figures have been removed because no supporting raw experiment was found.
 
-Sentiment calls `@cf/huggingface/distilbert-sst-2-int8`, truncates input to 500 characters, and assumes top-level label/score fields; model response compatibility needs validation. A caught exception falls back to keywords, while an unexpected response shape may become neutral. Insights call `@cf/meta/llama-3-8b-instruct`. These are inference integrations, not trained or evaluated models. The sentiment display maps labels to 8/5/2 rather than measuring calibrated satisfaction.
+Sentiment labels come from local SQL fixtures. Insights call `@cf/meta/llama-3-8b-instruct`; this is an inference integration, not a trained or evaluated model. The sentiment display maps labels to 8/5/2 rather than measuring calibrated satisfaction.
 
 **Use synthetic data and trusted local access.** No authentication, rate limiting or tenant isolation is implemented. Reporter emails are returned by APIs; CORS is unrestricted; dashboard text is escaped and data-dependent click handlers use event listeners. Public HTTP seeding is disabled. AI errors report unavailability without claiming cached results. Do not expose this prototype to untrusted data or public traffic without addressing these issues.
 
 ## Validation
 
-On 2026-10-20, `npm ci --ignore-scripts`, `npx tsc --noEmit`, and Wrangler's dry-run bundle completed successfully in the review environment. No deployment or AI request was made. `npm test -- --run` failed before collecting tests because Workers tooling could not enumerate network interfaces (`uv_interface_addresses`). The [existing tests](test/index.spec.ts) still assert the starter “Hello World!” response, so even a runnable suite is not application validation. No CI workflow is committed. See [scope and next checks](docs/project-overview.md).
+`npm run test:security` passes five Node 24 regression tests. `npm test -- --run` passes four Workers tests with isolated local D1/KV bindings and remote bindings disabled. TypeScript and a Wrangler dry-run bundle pass; no deployment or remote AI request was made. [CI](https://github.com/Albert-bit07/feedback-analyzer/actions) runs the type-check and both test suites. The original starter assertions and remote-auth test configuration were repaired.
 
 ## Security repair — 2026-10-20
 
-Removed public HTTP seeding; SQL fixtures remain available for local setup. API reads now reject other methods, malformed IDs return 400, unknown API routes return 404, and unexpected errors no longer reveal exception details. Dashboard values are escaped as text and data-dependent click handlers use event listeners. `npm run test:security` runs five Node 24 regression tests (all failed before the repair; all pass after). The renderer test executes the actual dashboard script with a minimal DOM fixture; it is not a browser end-to-end test. The Workers starter assertions now check the dashboard contract. Earlier validation entries above describe the baseline, not current results. Authentication, tenant isolation, rate limiting, real D1/KV integration and dependency advisory remediation remain outstanding.
+Removed public HTTP seeding; SQL fixtures remain available for local setup. API reads now reject other methods, malformed IDs return 400, unknown API routes return 404, and unexpected errors no longer reveal exception details. Dashboard values are escaped as text and data-dependent click handlers use event listeners. `npm run test:security` runs five Node 24 regression tests (all failed before the repair; all pass after). The renderer test executes the actual dashboard script with a minimal DOM fixture; it is not a browser end-to-end test. The Workers starter assertions now check the dashboard contract. Authentication, tenant isolation, rate limiting, cloud deployment validation and dependency advisory remediation remain outstanding.
 
 Workers tests now run with remote bindings disabled and cover local D1/KV cold/cache reads and missing feedback in addition to dashboard responses. `npm test -- --run` passes four tests locally. No remote AI inference is tested.

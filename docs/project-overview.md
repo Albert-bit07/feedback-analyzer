@@ -1,3 +1,5 @@
+> Historical audit: see the [README](../README.md) for current fixes and test status.
+
 # Engineering overview
 
 ## Decisions worth discussing
