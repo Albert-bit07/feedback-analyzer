@@ -1,0 +1,2 @@
+# Copy to .dev.vars and replace this value before starting the local server.
+DASHBOARD_PASSWORD=replace-with-a-long-random-secret

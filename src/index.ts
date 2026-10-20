@@ -1,4 +1,8 @@
+import { authorize } from './access.ts';
+import { workflow } from './workflow.ts';
+import { triageHTML } from './triage.ts';
 export interface Env {
+	DASHBOARD_PASSWORD?: string;
 	DB: D1Database;
 	AI: Ai;
 	CACHE: KVNamespace;
@@ -24,22 +28,18 @@ export default {
 	async fetch(request: Request, env: Env): Promise<Response> {
 		const url = new URL(request.url);
 
-		// CORS headers for API requests
-		const corsHeaders = {
-			'Access-Control-Allow-Origin': '*',
-			'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-			'Access-Control-Allow-Headers': 'Content-Type',
-		};
-
-		if (request.method === 'OPTIONS') {
-			return new Response(null, { headers: corsHeaders });
-		}
+        const denied = await authorize(request, env.DASHBOARD_PASSWORD);
+        if (denied) return denied;
+        const corsHeaders = { 'Cache-Control': 'no-store' };
 
 		try {
+            const handled = await workflow(request, env);
+            if (handled) return handled;
+            if (url.pathname === '/triage' && request.method === 'GET') return new Response(triageHTML, { headers: { 'Content-Type': 'text/html; charset=utf-8', ...corsHeaders } });
             // Seeding is a local CLI operation, never a public HTTP mutation.
             if (url.pathname === '/api/seed') return new Response('Not found', { status: 404 });
             if (url.pathname.startsWith('/api/') && request.method !== 'GET') {
-                return new Response('Method not allowed', { status: 405, headers: { Allow: 'GET, OPTIONS' } });
+                return new Response('Method not allowed', { status: 405, headers: { Allow: 'GET' } });
             }
 			// API Routes
 			if (url.pathname === '/api/stats') {
@@ -94,13 +94,6 @@ export default {
 
 // Get overall stats
 async function getStats(env: Env, corsHeaders: Record<string, string>): Promise<Response> {
-	const cacheKey = 'stats';
-	const cached = await env.CACHE.get(cacheKey);
-	if (cached) {
-		return new Response(cached, {
-			headers: { 'Content-Type': 'application/json', ...corsHeaders },
-		});
-	}
 
 	const totalResult = await env.DB.prepare('SELECT COUNT(*) as count FROM feedback').first();
 	const unresolvedResult = await env.DB.prepare('SELECT COUNT(*) as count FROM feedback WHERE resolved_at IS NULL').first();
@@ -137,7 +130,6 @@ async function getStats(env: Env, corsHeaders: Record<string, string>): Promise<
 	};
 
 	const response = JSON.stringify(stats);
-	await env.CACHE.put(cacheKey, response, { expirationTtl: 300 }); // Cache for 5 minutes
 
 	return new Response(response, {
 		headers: { 'Content-Type': 'application/json', ...corsHeaders },
@@ -146,13 +138,6 @@ async function getStats(env: Env, corsHeaders: Record<string, string>): Promise<
 
 // Get top ranking issues (by count)
 async function getTopIssues(env: Env, corsHeaders: Record<string, string>): Promise<Response> {
-	const cacheKey = 'top-issues';
-	const cached = await env.CACHE.get(cacheKey);
-	if (cached) {
-		return new Response(cached, {
-			headers: { 'Content-Type': 'application/json', ...corsHeaders },
-		});
-	}
 
 	const result = await env.DB.prepare(`
 		SELECT 
@@ -167,7 +152,6 @@ async function getTopIssues(env: Env, corsHeaders: Record<string, string>): Prom
 	`).all();
 
 	const response = JSON.stringify(result.results);
-	await env.CACHE.put(cacheKey, response, { expirationTtl: 300 });
 
 	return new Response(response, {
 		headers: { 'Content-Type': 'application/json', ...corsHeaders },
@@ -196,13 +180,6 @@ async function getRecentIssues(env: Env, corsHeaders: Record<string, string>): P
 
 // Get users with multiple complaints
 async function getRepeatUsers(env: Env, corsHeaders: Record<string, string>): Promise<Response> {
-	const cacheKey = 'repeat-users';
-	const cached = await env.CACHE.get(cacheKey);
-	if (cached) {
-		return new Response(cached, {
-			headers: { 'Content-Type': 'application/json', ...corsHeaders },
-		});
-	}
 
 	const result = await env.DB.prepare(`
 		SELECT 
@@ -219,7 +196,6 @@ async function getRepeatUsers(env: Env, corsHeaders: Record<string, string>): Pr
 	`).all();
 
 	const response = JSON.stringify(result.results);
-	await env.CACHE.put(cacheKey, response, { expirationTtl: 300 });
 
 	return new Response(response, {
 		headers: { 'Content-Type': 'application/json', ...corsHeaders },
@@ -228,13 +204,6 @@ async function getRepeatUsers(env: Env, corsHeaders: Record<string, string>): Pr
 
 // Get longest unresolved issues
 async function getLongestUnresolved(env: Env, corsHeaders: Record<string, string>): Promise<Response> {
-	const cacheKey = 'longest-unresolved';
-	const cached = await env.CACHE.get(cacheKey);
-	if (cached) {
-		return new Response(cached, {
-			headers: { 'Content-Type': 'application/json', ...corsHeaders },
-		});
-	}
 
 	const result = await env.DB.prepare(`
 		SELECT 
@@ -249,7 +218,6 @@ async function getLongestUnresolved(env: Env, corsHeaders: Record<string, string
 	`).all();
 
 	const response = JSON.stringify(result.results);
-	await env.CACHE.put(cacheKey, response, { expirationTtl: 300 });
 
 	return new Response(response, {
 		headers: { 'Content-Type': 'application/json', ...corsHeaders },
@@ -382,7 +350,7 @@ function getDashboardHTML(): string {
     <div class="max-w-7xl mx-auto">
         <!-- Header -->
         <div class="mb-8 fade-in">
-            <h1 class="text-4xl font-bold text-white mb-2">Feedback Intelligence Dashboard</h1>
+            <h1 class="text-4xl font-bold text-white mb-2">Feedback Intelligence Dashboard</h1><a href="/triage" class="text-blue-300 underline">Submit and triage feedback</a>
             <p class="text-slate-400">Real-time aggregation and analysis of customer feedback</p>
         </div>
 

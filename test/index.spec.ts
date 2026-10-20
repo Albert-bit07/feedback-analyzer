@@ -5,10 +5,11 @@ import worker from '../src/index';
 // For now, you'll need to do something like this to get a correctly-typed
 // `Request` to pass to `worker.fetch()`.
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
+const auth = { Authorization: 'Basic ' + btoa('analyst:test-only-password') };
 
 describe('Dashboard worker', () => {
 	it('serves the dashboard (unit style)', async () => {
-		const request = new IncomingRequest('http://example.com');
+		const request = new IncomingRequest('http://example.com', { headers: auth });
 		// Create an empty context to pass to `worker.fetch()`.
 		const ctx = createExecutionContext();
 		const response = await worker.fetch(request, env);
@@ -20,7 +21,7 @@ describe('Dashboard worker', () => {
 	});
 
 	it('serves the dashboard (integration style)', async () => {
-		const response = await SELF.fetch('https://example.com');
+		const response = await SELF.fetch('https://example.com', { headers: auth });
 		expect(response.status).toBe(200);
 		expect(response.headers.get('content-type')).toContain('text/html');
 		expect(await response.text()).toContain('Feedback');
@@ -32,19 +33,19 @@ describe('read APIs with isolated local bindings', () => {
     await env.DB.exec('DROP TABLE IF EXISTS feedback');
     await env.CACHE.delete('stats');
   });
-  it('returns matching cold and cached stats', async () => {
+  it('returns consistent uncached stats', async () => {
     await env.DB.exec('CREATE TABLE feedback (id INTEGER PRIMARY KEY, title TEXT, description TEXT, source TEXT, user_email TEXT, sentiment TEXT, category TEXT, priority TEXT, created_at TEXT, resolved_at TEXT)');
     await env.DB.prepare("INSERT INTO feedback (title, sentiment, user_email) VALUES (?, ?, ?)").bind('Example', 'positive', 'synthetic@example.test').run();
-    const first = await SELF.fetch('https://example.com/api/stats');
+    const first = await SELF.fetch('https://example.com/api/stats', { headers: auth });
     expect(first.status).toBe(200);
     expect(await first.json()).toEqual({ total: 1, avgSentiment: '8.0', unresolved: 1, repeatUsers: 0 });
-    const cached = await SELF.fetch('https://example.com/api/stats');
+    const cached = await SELF.fetch('https://example.com/api/stats', { headers: auth });
     expect(await cached.json()).toEqual({ total: 1, avgSentiment: '8.0', unresolved: 1, repeatUsers: 0 });
   });
 
   it('returns 404 for absent feedback', async () => {
     await env.DB.exec('CREATE TABLE feedback (id INTEGER PRIMARY KEY, title TEXT, description TEXT, source TEXT, user_email TEXT, sentiment TEXT, category TEXT, priority TEXT, created_at TEXT, resolved_at TEXT)');
-    const response = await SELF.fetch('https://example.com/api/feedback/1');
+    const response = await SELF.fetch('https://example.com/api/feedback/1', { headers: auth });
     expect(response.status).toBe(404);
     expect(await response.json()).toEqual({ error: 'Feedback not found' });
   });
