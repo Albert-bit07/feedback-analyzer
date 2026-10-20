@@ -1,3 +1,5 @@
+> Historical audit: the current [README](../README.md) supersedes pre-repair seed-route and test-status descriptions below.
+
 # Engineering overview
 
 ## Decisions worth discussing

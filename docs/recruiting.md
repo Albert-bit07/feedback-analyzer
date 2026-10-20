@@ -1,3 +1,5 @@
+> Historical audit: the current [README](../README.md) supersedes pre-repair seed-route and test-status descriptions below.
+
 # Recruiting notes — Feedback Analyzer
 
 ## One sentence / suggested repository description

@@ -1,3 +1,5 @@
+> Historical audit: the current [README](../README.md) supersedes pre-repair seed-route and test-status descriptions below.
+
 # 90-second local demonstration
 
 **Status:** recording script, not a verified recording. No screenshot or output is fabricated. Use only seeded examples in a fresh disposable checkout; do not seed a shared service.
