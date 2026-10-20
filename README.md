@@ -9,11 +9,11 @@ Product teams need to spot repeated complaints and aging issues without reading 
 - Cache four summary endpoints for five minutes and AI insights for ten minutes.
 - Request an AI summary of up to 20 entries from the past seven days.
 
-**Contribution:** Albert Mejooli authored the initial application commit and subsequent documentation; see [implementation history](https://github.com/Albert-bit07/feedback-analyzer/commits/main/src/index.ts). This personal project is not evidence of internal Cloudflare work.
+**Contribution:** Albert Mejooli authored the initial application commit and subsequent documentation; see [implementation history](https://github.com/Albert-bit07/feedback-analyzer/commits/main/src/index.ts).
 
 **Stack:** TypeScript · Cloudflare Workers · D1/SQLite · KV · Workers AI · inline HTML/JavaScript · Tailwind CDN.
 
-[90-second demo plan](docs/demo.md) · [Engineering decisions and validation](docs/project-overview.md) · [Recruiting materials](docs/recruiting.md)
+[90-second demo plan](docs/demo.md) · [Engineering decisions and validation](docs/project-overview.md)
 
 ## Architecture
 
