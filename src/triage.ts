@@ -27,7 +27,26 @@ async function refresh() {
       try { await api('/api/feedback/' + row.id + '/status', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:row.resolved_at ? 'open':'resolved'})}); await refresh(); }
       catch (error) { message.textContent = error.message; button.disabled = false; }
     };
-    card.append(title,detail,state,button); root.append(card);
+    card.append(title,detail,state,button);
+    if (row.analysis_summary) {
+      const analysis = document.createElement('p');
+      analysis.textContent = 'Analysis: ' + row.analysis_summary + ' · ' + row.analysis_sentiment + ' · ' + row.inference_ms + ' ms';
+      card.append(analysis);
+    }
+    if (row.last_error) {
+      const error = document.createElement('small'); error.textContent = 'Processing error: ' + row.last_error;
+      card.append(error);
+    }
+    if (row.processing_status === 'failed') {
+      const replay = document.createElement('button'); replay.textContent = 'Retry analysis';
+      replay.onclick = async () => {
+        replay.disabled = true;
+        try { await api('/api/feedback/' + row.id + '/replay', {method:'POST'}); await refresh(); }
+        catch (error) { message.textContent = error.message; replay.disabled = false; }
+      };
+      card.append(replay);
+    }
+    root.append(card);
   }
 }
 let pending = null;

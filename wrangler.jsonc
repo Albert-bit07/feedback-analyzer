@@ -3,6 +3,7 @@
         "name": "feedback-analyzer",
         "main": "src/index.ts",
         "compatibility_date": "2025-09-27",
+        "triggers": { "crons": ["* * * * *"] },
         "observability": {
                 "enabled": true
         },

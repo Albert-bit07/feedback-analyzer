@@ -16,7 +16,7 @@ SQL summaries no longer use cache-aside KV entries: after ingestion and resoluti
 
 `migrations/0001_ingestion.sql` upgrades the original schema and adds durable jobs and resolution history. D1 migrations record application; direct reruns of its ALTER statements are unsupported. Legacy fixtures have no processing job and are explicitly labeled in the triage page.
 
-Jobs remain pending until a subsequent dispatcher/consumer milestone. There is no claim of queue recovery, classification quality, semantic grouping, tenant isolation or throughput measurement. The current workflow supports submission and human triage without model availability.
+A scheduled D1 poller claims jobs with unique 60-second leases, bounds inference to a 20-second application timeout, backs off failures and terminates after five attempts. Expired leases recover interrupted attempts. Completion and analysis insertion are transactional and fenced by lease token, lease expiry and input fingerprint. Analyses are keyed by input/model/prompt version and never overwrite original feedback or human resolutions. Failed jobs can be explicitly replayed. No Cloudflare Queue is used; no claim of classification quality, semantic grouping, tenant isolation or measured throughput is made.
 
 ## Evidence
 

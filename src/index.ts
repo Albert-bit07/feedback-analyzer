@@ -1,3 +1,4 @@
+import { processPending } from './processing.ts';
 import { authorize } from './access.ts';
 import { workflow } from './workflow.ts';
 import { triageHTML } from './triage.ts';
@@ -25,6 +26,9 @@ interface Feedback {
 }
 
 export default {
+    async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+        ctx.waitUntil(processPending(env));
+    },
 	async fetch(request: Request, env: Env): Promise<Response> {
 		const url = new URL(request.url);
 
