@@ -9,12 +9,12 @@
     "test": "vitest",
     "cf-typegen": "wrangler types",
     "test:security": "node --test test/security.test.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc -p test/tsconfig.json --noEmit"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.12.4",
+    "@cloudflare/vitest-plugin": "^1.4.6",
     "typescript": "^5.5.2",
-    "vitest": "~3.2.0",
-    "wrangler": "^4.59.3"
+    "vitest": "^4.1.11",
+    "wrangler": "^4.151.3"
   }
 }
