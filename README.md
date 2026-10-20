@@ -72,3 +72,5 @@ On 2026-10-20, `npm ci --ignore-scripts`, `npx tsc --noEmit`, and Wrangler's dry
 ## Security repair — 2026-10-20
 
 Removed public HTTP seeding; SQL fixtures remain available for local setup. API reads now reject other methods, malformed IDs return 400, unknown API routes return 404, and unexpected errors no longer reveal exception details. Dashboard values are escaped as text and data-dependent click handlers use event listeners. `npm run test:security` runs five Node 24 regression tests (all failed before the repair; all pass after). The renderer test executes the actual dashboard script with a minimal DOM fixture; it is not a browser end-to-end test. The Workers starter assertions now check the dashboard contract. Earlier validation entries above describe the baseline, not current results. Authentication, tenant isolation, rate limiting, real D1/KV integration and dependency advisory remediation remain outstanding.
+
+Workers tests now run with remote bindings disabled and cover local D1/KV cold/cache reads and missing feedback in addition to dashboard responses. `npm test -- --run` passes four tests locally. No remote AI inference is tested.
