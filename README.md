@@ -11,14 +11,17 @@ flowchart TD
   C[API client or triage browser] --> A[Authentication and validation]
   A --> T[D1 transaction]
   T --> F[(Original feedback)]
-  T --> J[(Pending processing jobs)]
+  T --> J[(Durable processing jobs)]
+  J --> P[Leased scheduled processor]
+  P --> A[(Versioned analyses)]
+  A --> V
   F --> V[Triage and SQL summaries]
   V --> H[(Resolution history)]
   F --> I[Optional legacy AI summary]
   I --> K[(KV insight cache)]
 ```
 
-Original reports remain separate from processing state and human resolution history. The `/triage` page shows the most recent 100 reports, their pending analysis state, and resolve/reopen controls. The original dashboard at `/` provides aggregate views and optional AI insights. **This milestone persists jobs but does not yet dispatch or process them.** Pending means pending; no analysis is fabricated.
+Original reports remain separate from processing state and human resolution history. The `/triage` page shows the most recent 100 reports, their pending analysis state, and resolve/reopen controls. The original dashboard at `/` provides aggregate views and optional AI insights. A scheduled worker claims durable jobs, validates model output and writes versioned analyses. Pending, processing, completed and failed states remain visible; failed jobs can be explicitly replayed.
 
 ## Run locally
 
@@ -55,7 +58,9 @@ Curl prompts for the password. Retry with the same key and content to receive th
 | `/api/feedback` | POST | Validated submission and atomic pending job; 202 |
 | `/api/feedback/:id` | GET | Detail and reporter history for authenticated analysts |
 | `/api/feedback/:id/status` | POST | `{"status":"resolved"}` or `{"status":"open"}`; records transitions |
-| `/api/triage` | GET | Latest 100 reports and processing state, without response caching |
+| `/api/triage` | GET | Latest 100 reports, processing state and analysis, without response caching |
+| `/api/feedback/:id/replay` | POST | Requeue a terminally failed job |
+| `/api/processing` | GET | Counts, attempt totals and oldest creation time by processing state |
 | `/api/stats`, `/api/top-issues`, `/api/recent` | GET | SQL summaries and recent records |
 | `/api/repeat-users`, `/api/longest-unresolved` | GET | Reporter and age summaries |
 | `/api/ai-insights` | GET | Optional generated summary, cached for 600 seconds |
@@ -76,9 +81,19 @@ CI runs source and test type checks, Node security regressions and local Workers
 
 ## Next milestones and trade-offs
 
-- Add asynchronous dispatch, leased processing, retries, replay and validated versioned analyses; jobs currently remain pending.
+- Evaluate model output on labeled reports and add human corrections/semantic issue suggestions. Current model output is validated structurally, not proven accurate.
 - Add individual identities, rate limits and audit attribution before broader organizational use. Shared credentials cannot identify which analyst resolved a report.
 - Add pagination, semantic issue grouping and human corrections. Exact title grouping currently remains a dashboard summary, not an issue entity.
 - Evaluate analysis quality on labeled data before claiming useful classifications. Existing sentiment values are fixtures, and the 8/5/2 display mapping is not calibrated satisfaction.
 
 [Demo](docs/demo.md) · [Design decisions](docs/project-overview.md)
+
+## Durable processing
+
+A minute cron invokes the processor for at most five jobs per invocation. D1 is both the durable work store and the claim boundary: an atomic update grants a 60-second lease with a unique token. Inference has a 20-second application timeout. Errors back off from one minute exponentially; five unsuccessful attempts reach a terminal failed state. Expired leases are reclaimable, including after a worker restart. The triage page exposes a retry button for failed jobs.
+
+The analysis key includes feedback ID, the accepted input fingerprint, model ID and prompt version. Completion and job state commit together, and writes require the current lease and matching input fingerprint. A late worker cannot overwrite a newer attempt. Generated interpretations do not overwrite original feedback or human resolution decisions. Reports are currently immutable through the API; the fingerprint fence is also tested against a simulated input change.
+
+This implementation polls D1 directly; it does not require Cloudflare Queues or claim queue-delivery testing. If a queue is added later, D1 should remain the recovery source of truth. Throughput is intentionally bounded and unbenchmarked. Provider timeouts may leave an upstream inference running, but late results are not persisted by the timed-out attempt.
+
+Tests inject controlled model responses, failures, stale leases and duplicate work. Real inference and cron delivery are not tested against a deployed Cloudflare account. For local scheduled-handler testing, run Wrangler with `--test-scheduled` and invoke its local scheduled endpoint deliberately; this can call remote Workers AI. Normal `/triage` reads do not invoke inference. Configure the secret and apply both migrations before deployment.

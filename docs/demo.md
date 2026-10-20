@@ -6,4 +6,4 @@
 4. Resolve the report, verify the unresolved count at `/api/stats`, then reopen it. The count changes without waiting for cache expiration.
 5. Explain the transaction boundary: both the feedback row and pending processing job must commit. The integration test deliberately removes the job table and verifies that failed job insertion rolls back feedback.
 
-This is a demo procedure, not a recording. No remote inference, deployment, browser screenshot or performance claim is implied. Processing is a subsequent milestone; do not present pending reports as analyzed.
+This is a demo procedure, not a recording. No remote inference, deployment, browser screenshot or performance claim is implied. The processor is covered by injected-response integration tests. Show retry/replay and lease-recovery tests separately from real model behavior; do not present synthetic test output as a live inference result.

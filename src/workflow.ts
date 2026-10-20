@@ -1,3 +1,4 @@
+import { MODEL, PROMPT_VERSION } from './processing.ts';
 import type { Env } from './index';
 
 const json = (data: unknown, status = 200) => Response.json(data, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -57,9 +58,22 @@ export async function workflow(request: Request, env: Env): Promise<Response | n
   }
   if (path === '/api/triage' && request.method === 'GET') {
     const rows = await env.DB.prepare(`SELECT f.id, f.title, f.description, f.source, f.created_at, f.resolved_at,
-      j.status AS processing_status, j.attempts, j.last_error
-      FROM feedback f LEFT JOIN processing_jobs j ON j.feedback_id = f.id ORDER BY f.id DESC LIMIT 100`).all();
+      j.status AS processing_status, j.attempts, j.last_error, j.next_attempt_ms, a.summary AS analysis_summary, a.sentiment AS analysis_sentiment, a.inference_ms
+      FROM feedback f LEFT JOIN processing_jobs j ON j.feedback_id = f.id
+      LEFT JOIN analyses a ON a.feedback_id=f.id AND a.input_hash=f.request_hash AND a.model_version=? AND a.prompt_version=?
+      ORDER BY f.id DESC LIMIT 100`).bind(MODEL,PROMPT_VERSION).all();
     return json(rows.results);
+  }
+  const replay = path.match(/^\/api\/feedback\/([1-9][0-9]*)\/replay$/);
+  if (replay && request.method === 'POST') {
+    const id = Number(replay[1]);
+    if (!Number.isSafeInteger(id)) return json({ error: 'Invalid feedback ID' }, 400);
+    const result = await env.DB.prepare("UPDATE processing_jobs SET status='pending',attempts=0,next_attempt_ms=0,last_error=NULL,lease_token=NULL,lease_until=NULL WHERE feedback_id=? AND status='failed' RETURNING feedback_id").bind(id).first();
+    return result ? json({ id, processing: 'pending' }, 202) : json({ error: 'No failed job to replay' }, 409);
+  }
+  if (path === '/api/processing' && request.method === 'GET') {
+    const jobs = await env.DB.prepare("SELECT status,COUNT(*) AS count,SUM(attempts) AS attempts,MIN(created_at) AS oldest_created_at FROM processing_jobs GROUP BY status").all();
+    return json(jobs.results);
   }
   const match = path.match(/^\/api\/feedback\/([1-9][0-9]*)\/status$/);
   if (match && request.method === 'POST') {
