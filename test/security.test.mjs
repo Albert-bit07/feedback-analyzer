@@ -3,31 +3,33 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import worker from '../src/index.ts';
 
-const request = (path, method = 'GET') => new Request('https://example.test' + path, { method });
+const credentials = { DASHBOARD_PASSWORD: 'test-only-password' };
+const request = (path, method = 'GET') => new Request('https://example.test' + path, { method, headers: { Authorization: 'Basic ' + btoa('analyst:test-only-password') } });
 test('public seed endpoint cannot mutate bindings or invoke AI', async () => {
   for (const method of ['GET', 'POST']) {
-    const response = await worker.fetch(request('/api/seed', method), {});
+    const response = await worker.fetch(request('/api/seed', method), credentials);
     assert.equal(response.status, 404);
   }
 });
 test('invalid IDs are rejected before database access', async () => {
   for (const id of ['1oops', '-1', '0', '9007199254740992', '1/2']) {
-    assert.equal((await worker.fetch(request('/api/feedback/' + id), {})).status, 400);
+    assert.equal((await worker.fetch(request('/api/feedback/' + id), credentials)).status, 400);
   }
 });
 test('API methods and unknown routes have explicit status codes', async () => {
-  assert.equal((await worker.fetch(request('/api/stats', 'POST'), {})).status, 405);
-  assert.equal((await worker.fetch(request('/api/missing'), {})).status, 404);
+  assert.equal((await worker.fetch(request('/api/stats', 'POST'), credentials)).status, 405);
+  assert.equal((await worker.fetch(request('/api/missing'), credentials)).status, 404);
 });
 test('internal errors do not disclose binding details', async () => {
   const response = await worker.fetch(request('/api/stats'), {
-    CACHE: { get() { throw new Error('private database details'); } },
+    ...credentials,
+    DB: { prepare() { throw new Error('private database details'); } },
   });
   assert.equal(response.status, 500);
   assert.deepEqual(await response.json(), { error: 'Internal server error' });
 });
 test('dashboard uses escaped text and event listeners for hostile titles', async () => {
-  const html = await (await worker.fetch(request('/'), {})).text();
+  const html = await (await worker.fetch(request('/'), credentials)).text();
   const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
   const elements = new Map();
   const document = { getElementById(id) {
