@@ -1,5 +1,5 @@
 import { env, createExecutionContext, waitOnExecutionContext, SELF } from 'cloudflare:test';
-import { describe, it, expect } from 'vitest';
+import { beforeEach, describe, it, expect } from 'vitest';
 import worker from '../src/index';
 
 // For now, you'll need to do something like this to get a correctly-typed
@@ -28,6 +28,10 @@ describe('Dashboard worker', () => {
 });
 
 describe('read APIs with isolated local bindings', () => {
+  beforeEach(async () => {
+    await env.DB.exec('DROP TABLE IF EXISTS feedback');
+    await env.CACHE.delete('stats');
+  });
   it('returns matching cold and cached stats', async () => {
     await env.DB.exec('CREATE TABLE feedback (id INTEGER PRIMARY KEY, title TEXT, description TEXT, source TEXT, user_email TEXT, sentiment TEXT, category TEXT, priority TEXT, created_at TEXT, resolved_at TEXT)');
     await env.DB.prepare("INSERT INTO feedback (title, sentiment, user_email) VALUES (?, ?, ?)").bind('Example', 'positive', 'synthetic@example.test').run();
