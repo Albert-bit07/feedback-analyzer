@@ -7,7 +7,7 @@ Product teams need to spot repeated complaints and aging issues without reading 
 - Rank unresolved issues by identical title, inspect recent feedback and open individual records.
 - Find repeat reporters and the oldest unresolved entries using relational queries.
 - Cache four summary endpoints for five minutes and AI insights for ten minutes.
-- Generate sentiment during API seeding and request an AI summary of up to 20 entries from the past seven days.
+- Request an AI summary of up to 20 entries from the past seven days.
 
 **Contribution:** Albert Mejooli authored the initial application commit and subsequent documentation; see [implementation history](https://github.com/Albert-bit07/feedback-analyzer/commits/main/src/index.ts). This personal project is not evidence of internal Cloudflare work.
 
@@ -38,7 +38,7 @@ npx wrangler d1 execute feedback-db --local --file=./schema.sql
 npm run dev
 ```
 
-Open the local URL printed by Wrangler. `schema.sql` creates the table and inserts sample rows: running it again adds duplicates. Use a fresh disposable checkout for a recording. Do not call `/api/seed` on a shared deployment: it mutates D1, clears shared cache keys, and can invoke billable remote AI. Local development is not a guarantee that every binding runs offline; confirm Wrangler's AI behavior and account before enabling it.
+Open the local URL printed by Wrangler. `schema.sql` creates the table and inserts sample rows: running it again adds duplicates. Use a fresh disposable checkout for a recording. The public `/api/seed` endpoint has been removed. Populate disposable local databases using the SQL fixtures. Local development is not a guarantee that every binding runs offline; confirm Wrangler's AI behavior and account before enabling it.
 
 The committed [Wrangler configuration](wrangler.jsonc) refers to the author's resource IDs. For your own deployment, create your own D1 database and KV namespace, update a local configuration with their identifiers, bind Workers AI, initialize the remote schema deliberately, and review the security gaps below before considering `npm run deploy`. No deployment was performed for this review.
 
@@ -53,7 +53,7 @@ The committed [Wrangler configuration](wrangler.jsonc) refers to the author's re
 | `/api/longest-unresolved` | Five oldest unresolved entries | 300 s |
 | `/api/feedback/:id` | Record and up to ten entries from the same reporter | None |
 | `/api/ai-insights` | Summary of up to 20 recent entries | 600 s on success |
-| `/api/seed` | Inserts mock entries with sentiment analysis | Clears summary keys first |
+| `/api/seed` | Removed; returns 404 | Use local SQL fixtures |
 
 Routes other than OPTIONS are selected by path, without HTTP-method enforcement. There is no general feedback ingestion, login, resolution or deletion endpoint. The schema contains fields not exposed as workflows.
 
@@ -63,8 +63,12 @@ D1 supports grouping, ordering and reporter history without scanning all rows in
 
 Sentiment calls `@cf/huggingface/distilbert-sst-2-int8`, truncates input to 500 characters, and assumes top-level label/score fields; model response compatibility needs validation. A caught exception falls back to keywords, while an unexpected response shape may become neutral. Insights call `@cf/meta/llama-3-8b-instruct`. These are inference integrations, not trained or evaluated models. The sentiment display maps labels to 8/5/2 rather than measuring calibrated satisfaction.
 
-**Use synthetic data and trusted local access.** No authentication, rate limiting or tenant isolation is implemented. Reporter emails are returned by APIs; CORS is unrestricted; several dashboard values reach `innerHTML` or inline handlers without context-safe escaping. The seed route can be invoked by GET and repeatedly inserts duplicates. The AI failure message says cached data is used even when no cached summary was returned. Do not expose this prototype to untrusted data or public traffic without addressing these issues.
+**Use synthetic data and trusted local access.** No authentication, rate limiting or tenant isolation is implemented. Reporter emails are returned by APIs; CORS is unrestricted; dashboard text is escaped and data-dependent click handlers use event listeners. Public HTTP seeding is disabled. AI errors report unavailability without claiming cached results. Do not expose this prototype to untrusted data or public traffic without addressing these issues.
 
 ## Validation
 
 On 2026-10-20, `npm ci --ignore-scripts`, `npx tsc --noEmit`, and Wrangler's dry-run bundle completed successfully in the review environment. No deployment or AI request was made. `npm test -- --run` failed before collecting tests because Workers tooling could not enumerate network interfaces (`uv_interface_addresses`). The [existing tests](test/index.spec.ts) still assert the starter “Hello World!” response, so even a runnable suite is not application validation. No CI workflow is committed. See [scope and next checks](docs/project-overview.md).
+
+## Security repair — 2026-10-20
+
+Removed public HTTP seeding; SQL fixtures remain available for local setup. API reads now reject other methods, malformed IDs return 400, unknown API routes return 404, and unexpected errors no longer reveal exception details. Dashboard values are escaped as text and data-dependent click handlers use event listeners. `npm run test:security` runs five Node 24 regression tests (all failed before the repair; all pass after). The renderer test executes the actual dashboard script with a minimal DOM fixture; it is not a browser end-to-end test. The Workers starter assertions now check the dashboard contract. Earlier validation entries above describe the baseline, not current results. Authentication, tenant isolation, rate limiting, real D1/KV integration and dependency advisory remediation remain outstanding.

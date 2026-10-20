@@ -36,6 +36,11 @@ export default {
 		}
 
 		try {
+            // Seeding is a local CLI operation, never a public HTTP mutation.
+            if (url.pathname === '/api/seed') return new Response('Not found', { status: 404 });
+            if (url.pathname.startsWith('/api/') && request.method !== 'GET') {
+                return new Response('Method not allowed', { status: 405, headers: { Allow: 'GET, OPTIONS' } });
+            }
 			// API Routes
 			if (url.pathname === '/api/stats') {
 				return await getStats(env, corsHeaders);
@@ -62,13 +67,14 @@ export default {
 			}
 
 			if (url.pathname.startsWith('/api/feedback/')) {
-				const id = url.pathname.split('/').pop();
-				return await getFeedbackDetail(env, parseInt(id || '0'), corsHeaders);
+				const id = url.pathname.slice('/api/feedback/'.length);
+                if (!/^[1-9][0-9]*$/.test(id) || !Number.isSafeInteger(Number(id))) {
+                    return new Response('Invalid feedback ID', { status: 400 });
+                }
+                return await getFeedbackDetail(env, Number(id), corsHeaders);
 			}
 
-			if (url.pathname === '/api/seed') {
-				return await seedDatabase(env, corsHeaders);
-			}
+			if (url.pathname.startsWith('/api/')) return new Response('Not found', { status: 404 });
 
 			// Serve Dashboard HTML
 			return new Response(getDashboardHTML(), {
@@ -78,7 +84,7 @@ export default {
 				},
 			});
 		} catch (error) {
-			return new Response(JSON.stringify({ error: (error as Error).message }), {
+			return new Response(JSON.stringify({ error: 'Internal server error' }), {
 				status: 500,
 				headers: { 'Content-Type': 'application/json', ...corsHeaders },
 			});
@@ -296,133 +302,6 @@ async function getFeedbackDetail(env: Env, id: number, corsHeaders: Record<strin
 	});
 }
 
-// Analyze sentiment using Workers AI
-async function analyzeSentiment(env: Env, text: string): Promise<string> {
-	try {
-		const aiResponse = await env.AI.run('@cf/huggingface/distilbert-sst-2-int8', {
-			text: text.substring(0, 500), // Limit text length
-		});
-
-		const label = (aiResponse as any).label || 'NEGATIVE';
-		const score = (aiResponse as any).score || 0;
-
-		// Convert to our sentiment format
-		if (label === 'POSITIVE' && score > 0.6) return 'positive';
-		if (label === 'NEGATIVE' && score > 0.6) return 'negative';
-		return 'neutral';
-	} catch (error) {
-		// Fallback sentiment detection based on keywords
-		const lowerText = text.toLowerCase();
-		if (lowerText.includes('great') || lowerText.includes('love') || lowerText.includes('awesome') || lowerText.includes('excellent')) {
-			return 'positive';
-		}
-		if (lowerText.includes('fail') || lowerText.includes('error') || lowerText.includes('broken') || lowerText.includes('slow') || lowerText.includes('issue') || lowerText.includes('problem')) {
-			return 'negative';
-		}
-		return 'neutral';
-	}
-}
-
-// Seed database with mock data using Workers AI for sentiment
-async function seedDatabase(env: Env, corsHeaders: Record<string, string>): Promise<Response> {
-	// Clear existing cache
-	await env.CACHE.delete('stats');
-	await env.CACHE.delete('top-issues');
-	await env.CACHE.delete('repeat-users');
-	await env.CACHE.delete('longest-unresolved');
-	await env.CACHE.delete('ai-insights');
-
-	// Mock feedback data (20-30 entries with varied volumes and sources)
-	const mockFeedback = [
-		{ title: 'Dashboard loading takes 5+ seconds', description: 'The dashboard takes way too long to load. Sometimes it times out completely.', source: 'Discord', user_email: 'dev@company.com', created_at: '-45 days' },
-		{ title: 'Dashboard loading takes 5+ seconds', description: 'Dashboard is extremely slow to load', source: 'Support Ticket', user_email: 'pm@startup.io', created_at: '-40 days' },
-		{ title: 'Dashboard loading takes 5+ seconds', description: 'Performance issue with dashboard', source: 'GitHub', user_email: 'eng@tech.com', created_at: '-35 days' },
-		{ title: 'Dashboard loading takes 5+ seconds', description: 'Dashboard loading is slow', source: 'Twitter', user_email: 'user1@email.com', created_at: '-30 days' },
-		{ title: 'Dashboard loading takes 5+ seconds', description: 'Dashboard timeout errors', source: 'Discord', user_email: 'dev@company.com', created_at: '-25 days' },
-		{ title: 'Workers AI timeout errors on large files', description: 'Workers AI times out when processing files larger than 5MB', source: 'GitHub', user_email: 'eng@tech.com', created_at: '-38 days' },
-		{ title: 'Workers AI timeout errors on large files', description: 'Large file processing fails', source: 'Support Ticket', user_email: 'pm@startup.io', created_at: '-33 days' },
-		{ title: 'Workers AI timeout errors on large files', description: 'Timeout issue with AI service', source: 'Discord', user_email: 'dev@company.com', created_at: '-28 days' },
-		{ title: 'D1 migrations fail silently', description: 'D1 migrations fail without error messages', source: 'GitHub', user_email: 'eng@tech.com', created_at: '-42 days' },
-		{ title: 'D1 migrations fail silently', description: 'Migration errors are not reported properly', source: 'Support Ticket', user_email: 'pm@startup.io', created_at: '-37 days' },
-		{ title: 'KV cache invalidation not working', description: 'Cache does not invalidate when keys are updated', source: 'Discord', user_email: 'dev@company.com', created_at: '-15 days' },
-		{ title: 'KV cache invalidation not working', description: 'Cache invalidation broken', source: 'GitHub', user_email: 'eng@tech.com', created_at: '-12 days' },
-		{ title: 'Cannot deploy to Workers', description: 'Deployment fails with cryptic error message', source: 'Discord', user_email: 'dev@company.com', created_at: '-5 minutes' },
-		{ title: 'Wrangler CLI crashes on Windows', description: 'CLI crashes when running deploy command on Windows 11', source: 'GitHub', user_email: 'eng@tech.com', created_at: '-44 days' },
-		{ title: 'Documentation unclear on D1 setup', description: 'Cannot find clear instructions for D1 database setup', source: 'Support Ticket', user_email: 'pm@startup.io', created_at: '-39 days' },
-		{ title: 'R2 CORS configuration unclear', description: 'Cannot figure out CORS setup for R2 buckets', source: 'Support Ticket', user_email: 'pm@startup.io', created_at: '-36 days' },
-		{ title: 'API performance degraded', description: 'API is slower than usual. Response times have increased significantly', source: 'Discord', user_email: 'dev@company.com', created_at: '-3 days' },
-		{ title: 'Great new AI feature!', description: 'Love the new AI models. They work really well!', source: 'Twitter', user_email: 'fan@email.com', created_at: '-1 hour' },
-		{ title: 'Love the new features!', description: 'Great updates this month. Keep up the good work!', source: 'Twitter', user_email: 'happy@user.com', created_at: '-1 day' },
-		{ title: 'KV storage quota exceeded', description: 'Need more storage for KV namespace', source: 'Support Ticket', user_email: 'dev@company.com', created_at: '-12 minutes' },
-		{ title: 'Database migration failed', description: 'D1 migration script not working as expected', source: 'Support Ticket', user_email: 'pm@startup.io', created_at: '-2 hours' },
-		{ title: 'Workers AI rate limiting too strict', description: 'Hit rate limits with Workers AI too quickly', source: 'GitHub', user_email: 'eng@tech.com', created_at: '-31 days' },
-		{ title: 'Dashboard UI confusing', description: 'Hard to find deployment settings in the dashboard', source: 'Twitter', user_email: 'user1@email.com', created_at: '-2 days' },
-		{ title: 'Workers AI is slow', description: 'AI inference takes too long to complete', source: 'GitHub', user_email: 'eng@tech.com', created_at: '-29 days' },
-		{ title: 'Excellent documentation update', description: 'The latest docs are much clearer. Thank you!', source: 'Twitter', user_email: 'happy@user.com', created_at: '-6 hours' },
-	];
-
-	const inserted = [];
-	const errors = [];
-
-	for (const feedback of mockFeedback) {
-		try {
-			// Use Workers AI to analyze sentiment
-			const sentiment = await analyzeSentiment(env, `${feedback.title} ${feedback.description}`);
-			
-			// Determine priority based on sentiment and keywords
-			let priority = 'medium';
-			if (sentiment === 'negative' && (feedback.title.includes('error') || feedback.title.includes('fail') || feedback.title.includes('crash'))) {
-				priority = 'high';
-			} else if (sentiment === 'positive') {
-				priority = 'low';
-			}
-
-			// Determine category
-			let category = 'general';
-			if (feedback.title.includes('Dashboard') || feedback.title.includes('UI')) category = 'ux';
-			else if (feedback.title.includes('Workers AI') || feedback.title.includes('AI')) category = 'ai';
-			else if (feedback.title.includes('D1') || feedback.title.includes('migration') || feedback.title.includes('Database')) category = 'database';
-			else if (feedback.title.includes('KV') || feedback.title.includes('cache')) category = 'storage';
-			else if (feedback.title.includes('API') || feedback.title.includes('performance') || feedback.title.includes('slow')) category = 'performance';
-			else if (feedback.title.includes('Wrangler') || feedback.title.includes('CLI')) category = 'tooling';
-			else if (feedback.title.includes('documentation') || feedback.title.includes('CORS')) category = 'docs';
-
-			const result = await env.DB.prepare(`
-				INSERT INTO feedback (title, description, source, user_email, sentiment, category, priority, created_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', ?))
-			`).bind(
-				feedback.title,
-				feedback.description,
-				feedback.source,
-				feedback.user_email,
-				sentiment,
-				category,
-				priority,
-				feedback.created_at
-			).run();
-
-			inserted.push({ id: result.meta.last_row_id, title: feedback.title, sentiment });
-		} catch (error) {
-			errors.push({ title: feedback.title, error: (error as Error).message });
-		}
-	}
-
-	return new Response(
-		JSON.stringify({
-			message: `Seeded ${inserted.length} feedback entries`,
-			inserted: inserted.length,
-			errors: errors.length,
-			details: {
-				successful: inserted,
-				failed: errors,
-			},
-		}),
-		{
-			headers: { 'Content-Type': 'application/json', ...corsHeaders },
-		}
-	);
-}
-
 // Get AI-powered insights
 async function getAIInsights(env: Env, corsHeaders: Record<string, string>): Promise<Response> {
 	const cacheKey = 'ai-insights';
@@ -474,7 +353,7 @@ async function getAIInsights(env: Env, corsHeaders: Record<string, string>): Pro
 	} catch (error) {
 		return new Response(
 			JSON.stringify({
-				insights: 'AI analysis temporarily unavailable. Using cached data.',
+				insights: 'AI analysis temporarily unavailable.',
 				generated_at: new Date().toISOString(),
 			}),
 			{
@@ -576,9 +455,9 @@ function getDashboardHTML(): string {
 
         // Utility functions
         function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
+            return String(text ?? '').replace(/[&<>"']/g, char => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            })[char]);
         }
 
         function timeAgo(dateString) {
@@ -641,10 +520,10 @@ function getDashboardHTML(): string {
                                 \${feedback.userHistory.map(h => \`
                                     <div class="bg-slate-700/50 rounded p-3">
                                         <div class="flex items-center justify-between">
-                                            <span class="text-white text-sm">\${h.title}</span>
+                                            <span class="text-white text-sm">\${escapeHtml(h.title)}</span>
                                             <div class="flex items-center gap-2">
                                                 <span class="text-xs px-2 py-0.5 rounded \${getSentimentColor(h.sentiment)}">
-                                                    \${h.sentiment}
+                                                    \${escapeHtml(h.sentiment)}
                                                 </span>
                                                 <span class="text-xs text-slate-400">\${timeAgo(h.created_at)}</span>
                                                 \${h.resolved_at ? '<span class="text-xs text-green-400">Resolved</span>' : ''}
@@ -672,18 +551,18 @@ function getDashboardHTML(): string {
                                 </div>
                                 <div>
                                     <div class="text-sm text-slate-400 mb-1">User</div>
-                                    <span class="text-white">\${feedback.user_email || 'Anonymous'}</span>
+                                    <span class="text-white">\${escapeHtml(feedback.user_email || 'Anonymous')}</span>
                                 </div>
                                 <div>
                                     <div class="text-sm text-slate-400 mb-1">Sentiment</div>
                                     <span class="text-xs px-2 py-1 rounded \${getSentimentColor(feedback.sentiment)}">
-                                        \${feedback.sentiment || 'unknown'}
+                                        \${escapeHtml(feedback.sentiment || 'unknown')}
                                     </span>
                                 </div>
                                 <div>
                                     <div class="text-sm text-slate-400 mb-1">Priority</div>
                                     <span class="text-xs px-2 py-1 rounded \${getPriorityColor(feedback.priority)}">
-                                        \${feedback.priority || 'medium'}
+                                        \${escapeHtml(feedback.priority || 'medium')}
                                     </span>
                                 </div>
                                 <div>
@@ -719,7 +598,7 @@ function getDashboardHTML(): string {
                     <div class="space-y-4">
                         <div class="bg-slate-700/50 rounded p-4">
                             <div class="text-sm text-slate-400 mb-1">Total Mentions</div>
-                            <div class="text-3xl font-bold text-white">\${count}</div>
+                            <div class="text-3xl font-bold text-white">\${escapeHtml(count)}</div>
                         </div>
                         <div class="grid grid-cols-2 gap-4">
                             <div>
@@ -729,7 +608,7 @@ function getDashboardHTML(): string {
                             <div>
                                 <div class="text-sm text-slate-400 mb-1">Sentiment</div>
                                 <span class="text-xs px-2 py-1 rounded \${getSentimentColor(sentiment)}">
-                                    \${sentiment || 'unknown'}
+                                    \${escapeHtml(sentiment || 'unknown')}
                                 </span>
                             </div>
                         </div>
@@ -765,7 +644,7 @@ function getDashboardHTML(): string {
                 
                 container.innerHTML = issues.map((issue, idx) => \`
                     <div class="bg-slate-700/50 rounded-lg p-4 hover:bg-slate-700 transition-colors cursor-pointer" 
-                         onclick="showFeedbackDetail(null, '\${escapeHtml(issue.title)}', '', '\${escapeHtml(issue.sentiment || '')}', '\${issue.count}')">
+                         data-issue-index="\${idx}">
                         <div class="flex items-start justify-between mb-2">
                             <div class="flex items-start gap-3 flex-1">
                                 <div class="bg-slate-600 text-white text-sm font-bold rounded px-2 py-1 mt-0.5">
@@ -774,9 +653,9 @@ function getDashboardHTML(): string {
                                 <div class="flex-1">
                                     <h3 class="text-white font-medium">\${escapeHtml(issue.title)}</h3>
                                     <div class="flex items-center gap-2 mt-1 flex-wrap">
-                                        <span class="text-sm text-slate-400">\${issue.count} mentions</span>
+                                        <span class="text-sm text-slate-400">\${escapeHtml(issue.count)} mentions</span>
                                         \${issue.sentiment ? \`<span class="text-xs px-2 py-0.5 rounded \${getSentimentColor(issue.sentiment)}">
-                                            \${issue.sentiment}
+                                            \${escapeHtml(issue.sentiment)}
                                         </span>\` : ''}
                                     </div>
                                 </div>
@@ -784,6 +663,10 @@ function getDashboardHTML(): string {
                         </div>
                     </div>
                 \`).join('');
+                Array.from(container.children).forEach((card, index) => {
+                    const issue = issues[index];
+                    card.addEventListener('click', () => showFeedbackDetail(null, issue.title, '', issue.sentiment, issue.count));
+                });
             } catch (error) {
                 document.getElementById('top-issues').innerHTML = '<div class="text-red-400 text-center py-8">Error loading data</div>';
             }
@@ -798,21 +681,24 @@ function getDashboardHTML(): string {
                 
                 container.innerHTML = issues.map(issue => \`
                     <div class="bg-slate-700/50 rounded-lg p-4 hover:bg-slate-700 transition-colors cursor-pointer" 
-                         onclick="loadFeedbackDetail(\${issue.id})">
+                         data-feedback-id="\${Number(issue.id)}">
                         <div class="flex items-start justify-between mb-2">
-                            <h3 class="text-white font-medium flex-1">\${issue.title}</h3>
+                            <h3 class="text-white font-medium flex-1">\${escapeHtml(issue.title)}</h3>
                             \${issue.sentiment ? \`<span class="text-xs px-2 py-1 rounded \${getSentimentColor(issue.sentiment)}">
-                                \${issue.sentiment}
+                                \${escapeHtml(issue.sentiment)}
                             </span>\` : ''}
                         </div>
                         \${issue.description ? \`<p class="text-sm text-slate-400 mb-2">\${escapeHtml(issue.description.substring(0, 100))}\${issue.description.length > 100 ? '...' : ''}</p>\` : ''}
                         <div class="flex items-center gap-2 text-sm text-slate-400">
-                            <span class="bg-slate-600 px-2 py-0.5 rounded text-xs">\${issue.source}</span>
+                            <span class="bg-slate-600 px-2 py-0.5 rounded text-xs">\${escapeHtml(issue.source)}</span>
                             <span>•</span>
                             <span>\${timeAgo(issue.created_at)}</span>
                         </div>
                     </div>
                 \`).join('');
+                Array.from(container.children).forEach((card, index) => {
+                    card.addEventListener('click', () => loadFeedbackDetail(issues[index].id));
+                });
             } catch (error) {
                 document.getElementById('recent-issues').innerHTML = '<div class="text-red-400 text-center py-8">Error loading data</div>';
             }
@@ -829,11 +715,11 @@ function getDashboardHTML(): string {
                     <div class="bg-slate-700/50 rounded-lg p-4 hover:bg-slate-700 transition-colors">
                         <div class="flex items-center justify-between mb-2">
                             <div class="flex-1">
-                                <h3 class="text-white font-medium">\${user.user_email}</h3>
+                                <h3 class="text-white font-medium">\${escapeHtml(user.user_email)}</h3>
                                 \${user.issues ? \`<p class="text-sm text-slate-400 mt-1">\${escapeHtml(user.issues.split(' | ').slice(0, 2).join(', '))}\${user.issues.split(' | ').length > 2 ? '...' : ''}</p>\` : ''}
                             </div>
                             <div class="bg-purple-500/20 text-purple-300 px-3 py-1 rounded-full text-sm font-bold">
-                                \${user.complaint_count} issues
+                                \${escapeHtml(user.complaint_count)} issues
                             </div>
                         </div>
                     </div>
@@ -854,15 +740,15 @@ function getDashboardHTML(): string {
                     <div class="bg-slate-700/50 rounded-lg p-4 hover:bg-slate-700 transition-colors">
                         <div class="flex items-start justify-between mb-2">
                             <div class="flex-1">
-                                <h3 class="text-white font-medium mb-2">\${issue.title}</h3>
+                                <h3 class="text-white font-medium mb-2">\${escapeHtml(issue.title)}</h3>
                                 <div class="flex items-center gap-2 text-sm text-slate-400">
-                                    <span class="bg-slate-600 px-2 py-0.5 rounded text-xs">\${issue.source}</span>
+                                    <span class="bg-slate-600 px-2 py-0.5 rounded text-xs">\${escapeHtml(issue.source)}</span>
                                     <span>•</span>
                                     <span>\${timeAgo(issue.created_at)}</span>
                                 </div>
                             </div>
                             <div class="text-right">
-                                <div class="text-2xl font-bold text-orange-400">\${issue.days_open}</div>
+                                <div class="text-2xl font-bold text-orange-400">\${escapeHtml(issue.days_open)}</div>
                                 <div class="text-xs text-slate-400">days</div>
                             </div>
                         </div>
@@ -886,7 +772,7 @@ function getDashboardHTML(): string {
                         \${insights.map(insight => \`
                             <p class="flex items-start gap-2">
                                 <span class="text-blue-400 mt-1">•</span>
-                                <span>\${insight}</span>
+                                <span>\${escapeHtml(insight)}</span>
                             </p>
                         \`).join('')}
                     </div>

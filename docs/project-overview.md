@@ -32,3 +32,7 @@ Email/history disclosure, unescaped HTML contexts, unrestricted CORS, prompt inj
 ## Next engineering work
 
 Replace starter tests with isolated route tests using known D1 rows and controlled KV/AI bindings. Check cache-hit/miss equivalence, expiration/invalidation, missing IDs, partial seed failure and model response parsing. Add authentication and method restrictions before exposing data; remove public seeding; use safe DOM construction. Measure cache effects with fixed fixtures and archived raw timings before adding performance claims. These are recommendations, not implemented features of this documentation PR.
+
+## Security repair — 2026-10-20
+
+Removed public HTTP seeding; SQL fixtures remain available for local setup. API reads now reject other methods, malformed IDs return 400, unknown API routes return 404, and unexpected errors no longer reveal exception details. Dashboard values are escaped as text and data-dependent click handlers use event listeners. `npm run test:security` runs five Node 24 regression tests (all failed before the repair; all pass after). The renderer test executes the actual dashboard script with a minimal DOM fixture; it is not a browser end-to-end test. The Workers starter assertions now check the dashboard contract. Earlier validation entries above describe the baseline, not current results. Authentication, tenant isolation, rate limiting, real D1/KV integration and dependency advisory remediation remain outstanding.
