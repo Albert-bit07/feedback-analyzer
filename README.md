@@ -9,11 +9,11 @@ Product teams need to spot repeated complaints and aging issues without reading 
 - Cache four summary endpoints for five minutes and AI insights for ten minutes.
 - Request an AI summary of up to 20 entries from the past seven days.
 
-**Contribution:** Albert Mejooli authored the initial application commit and subsequent documentation; see [implementation history](https://github.com/Albert-bit07/feedback-analyzer/commits/main/src/index.ts). This personal project is not evidence of internal Cloudflare work.
+**Contribution:** Albert Mejooli authored the initial application commit and subsequent documentation; see [implementation history](https://github.com/Albert-bit07/feedback-analyzer/commits/main/src/index.ts).
 
 **Stack:** TypeScript · Cloudflare Workers · D1/SQLite · KV · Workers AI · inline HTML/JavaScript · Tailwind CDN.
 
-[90-second demo plan](docs/demo.md) · [Engineering decisions and validation](docs/project-overview.md) · [Recruiting materials](docs/recruiting.md)
+[90-second demo plan](docs/demo.md) · [Engineering decisions and validation](docs/project-overview.md)
 
 ## Architecture
 
@@ -22,7 +22,7 @@ flowchart TD
   B[Browser dashboard] -->|JSON requests| W[Worker router]
   W -->|summary cache| K[(KV)]
   W -->|SQL queries| D[(D1 feedback table)]
-  W -->|sentiment and insights| A[Workers AI]
+  W -->|insights| A[Workers AI]
   W -->|HTML and JSON| B
 ```
 
@@ -55,19 +55,19 @@ The committed [Wrangler configuration](wrangler.jsonc) refers to the author's re
 | `/api/ai-insights` | Summary of up to 20 recent entries | 600 s on success |
 | `/api/seed` | Removed; returns 404 | Use local SQL fixtures |
 
-Routes other than OPTIONS are selected by path, without HTTP-method enforcement. There is no general feedback ingestion, login, resolution or deletion endpoint. The schema contains fields not exposed as workflows.
+API reads require GET; OPTIONS handles preflight. There is no general feedback ingestion, login, resolution or deletion endpoint. The schema contains fields not exposed as workflows.
 
 ## Engineering decisions and limitations
 
 D1 supports grouping, ordering and reporter history without scanning all rows in application code. KV trades freshness for fewer repeated queries; no benchmark establishes a latency improvement. The previous README's 400 ms/75 ms figures have been removed because no supporting raw experiment was found.
 
-Sentiment labels come from the local SQL fixtures. Insights call `@cf/meta/llama-3-8b-instruct`; this is an inference integration, not a trained or evaluated model. The sentiment display maps labels to 8/5/2 rather than measuring calibrated satisfaction.
+Sentiment labels come from local SQL fixtures. Insights call `@cf/meta/llama-3-8b-instruct`; this is an inference integration, not a trained or evaluated model. The sentiment display maps labels to 8/5/2 rather than measuring calibrated satisfaction.
 
 **Use synthetic data and trusted local access.** No authentication, rate limiting or tenant isolation is implemented. Reporter emails are returned by APIs; CORS is unrestricted; dashboard text is escaped and data-dependent click handlers use event listeners. Public HTTP seeding is disabled. AI errors report unavailability without claiming cached results. Do not expose this prototype to untrusted data or public traffic without addressing these issues.
 
 ## Validation
 
-`npm run test:security` passes five Node 24 regression tests. `npm test -- --run` passes four Workers tests with isolated local D1/KV bindings and remote bindings disabled. TypeScript and a Wrangler dry-run bundle pass; no deployment or remote AI request was made. [CI](https://github.com/Albert-bit07/feedback-analyzer/actions) runs the type-check and both test suites. The original starter tests and remote-auth configuration failures were repaired.
+`npm run test:security` passes five Node 24 regression tests. `npm test -- --run` passes four Workers tests with isolated local D1/KV bindings and remote bindings disabled. TypeScript and a Wrangler dry-run bundle pass; no deployment or remote AI request was made. [CI](https://github.com/Albert-bit07/feedback-analyzer/actions) runs the type-check and both test suites. The original starter assertions and remote-auth test configuration were repaired.
 
 ## Security repair — 2026-10-20
 
