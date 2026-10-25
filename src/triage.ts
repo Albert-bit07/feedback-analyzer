@@ -4,6 +4,7 @@ export const triageHTML = `<!doctype html>
 <style>body{font:16px system-ui;max-width:960px;margin:40px auto;padding:0 20px;background:#f8fafc;color:#172033}input,textarea,button{font:inherit;padding:10px}input,textarea{display:block;width:95%;margin:8px 0 16px}article,form{background:white;padding:24px;margin:20px 0;border:1px solid #cbd5e1;border-radius:12px}button{cursor:pointer}#message{white-space:pre-wrap}small{display:block;color:#475569}</style>
 <h1>Feedback triage</h1><p>Submit a report, inspect its processing state, and resolve or reopen it. <a href="/">Summary dashboard</a></p>
 <form id="submission"><h2>Submit feedback</h2><label>Title<input name="title" required maxlength="200"></label><label>Description<textarea name="description" required maxlength="8000"></textarea></label><label>Source<input name="source" required maxlength="80" value="manual"></label><button>Submit</button></form>
+<section aria-labelledby="processing-heading"><h2 id="processing-heading">Processing health</h2><p id="processing-health" role="status">Loading processing state…</p><small>Current job state. Retry counts reset when a failed job is replayed; this is not a lifetime usage metric.</small></section>
 <p id="message" role="status"></p><button id="refresh">Refresh</button><main id="items"></main>
 <script>
 const message = document.getElementById('message');
@@ -12,7 +13,19 @@ async function api(path, options) {
   if (!response.ok) throw new Error('Request failed (' + response.status + '). Retry or check your credentials.');
   return response.json();
 }
+async function refreshHealth() {
+  const element = document.getElementById('processing-health');
+  try {
+    const health = await api('/api/processing/health');
+    const age = health.oldest_active_age_seconds === null ? 'none' : health.oldest_active_age_seconds + ' seconds';
+    element.textContent = 'Ready: ' + health.ready_pending + ' · Delayed: ' + health.delayed_pending +
+      ' · Processing: ' + health.processing + ' (expired leases: ' + health.expired_leases + ')' +
+      ' · Failed: ' + health.failed + ' · Completed: ' + health.completed +
+      ' · Retried jobs: ' + health.retried_jobs + ' · Oldest active job: ' + age;
+  } catch (error) { element.textContent = 'Processing health unavailable. Refresh to retry.'; }
+}
 async function refresh() {
+  await refreshHealth();
   const rows = await api('/api/triage');
   const root = document.getElementById('items'); root.replaceChildren();
   if (!rows.length) root.textContent = 'No feedback yet.';

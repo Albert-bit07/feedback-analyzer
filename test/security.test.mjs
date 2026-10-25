@@ -78,3 +78,26 @@ test('late insight generation cannot replace the cache for newer feedback state'
   assert.equal((await cached.json()).insights, 'The login problem is resolved.');
   assert.equal(calls, 2, 'unchanged snapshot must reuse its cached result');
 });
+
+test('triage health renderer replaces stale counters when a refresh fails', async () => {
+  const { triageHTML } = await import('../src/triage.ts');
+  const elements = new Map();
+  const document = {getElementById(id) {
+    if (!elements.has(id)) elements.set(id, {textContent: '', replaceChildren() {}});
+    return elements.get(id);
+  }};
+  let available = true;
+  const context = vm.createContext({document, fetch: async () => ({ok: available, status: 503,
+    json: async () => ({ready_pending:2, delayed_pending:1, processing:3, expired_leases:1,
+      failed:4, completed:5, retried_jobs:6, oldest_active_age_seconds:90})})});
+  const script = triageHTML.match(/<script>([\s\S]*?)<\/script>/)[1];
+  vm.runInContext(script.slice(0, script.indexOf('let pending = null;')), context);
+  await vm.runInContext('refreshHealth()', context);
+  const rendered = elements.get('processing-health');
+  assert.match(rendered.textContent, /Ready: 2/);
+  assert.match(rendered.textContent, /expired leases: 1/);
+  assert.match(rendered.textContent, /Oldest active job: 90 seconds/);
+  available = false;
+  await vm.runInContext('refreshHealth()', context);
+  assert.equal(rendered.textContent, 'Processing health unavailable. Refresh to retry.');
+});
