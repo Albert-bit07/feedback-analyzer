@@ -51,7 +51,7 @@ curl --user analyst \
   http://localhost:8787/api/feedback
 ```
 
-Curl prompts for the password. Retry with the same key and content to receive the same ID. Change the content with that key to see HTTP 409. Open `/triage`, resolve the report, refresh, then reopen it. SQL summaries reflect committed changes immediately; summary KV caching was removed to avoid stale counts and write/invalidation races. Optional legacy AI insights retain their 600-second cache and are not authoritative triage state.
+Curl prompts for the password. Retry with the same key and content to receive the same ID. Change the content with that key to see HTTP 409. Open `/triage`, resolve the report, refresh, then reopen it. SQL summaries reflect committed changes immediately; summary KV caching was removed to avoid stale counts and write/invalidation races. Optional AI insights are cached for 600 seconds per exact recent-feedback snapshot and prompt/model version. Each request reads up to 20 reports, including resolution status, before hashing the input. A late inference result can only populate its own snapshot key; it cannot overwrite a newer snapshot. This trades a bounded D1 read per request for freshness and does not deduplicate simultaneous inference on the same cache miss. Insights remain advisory, not authoritative triage state.
 
 | Endpoint | Method | Behavior |
 |---|---|---|

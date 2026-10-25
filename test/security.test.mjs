@@ -49,3 +49,32 @@ test('dashboard uses escaped text and event listeners for hostile titles', async
   container.children[0].callback();
   assert.equal(context.clicked[1], title);
 });
+
+test('late insight generation cannot replace the cache for newer feedback state', async () => {
+  let rows = [{id: 1, title: 'Login error', description: 'Cannot sign in', resolved_at: null}];
+  const cache = new Map();
+  let finishFirst, signalStarted;
+  const started = new Promise(resolve => { signalStarted = resolve; });
+  const delayed = new Promise(resolve => { finishFirst = resolve; });
+  let calls = 0;
+  const bindings = {
+    ...credentials,
+    DB: { prepare() { return {all: async () => ({results: structuredClone(rows)})}; } },
+    CACHE: {get: async key => cache.get(key), put: async (key, value) => { cache.set(key, value); }},
+    AI: {run: async () => {
+      calls++;
+      if (calls === 1) { signalStarted(); return delayed; }
+      return {response: 'The login problem is resolved.'};
+    }},
+  };
+  const first = worker.fetch(request('/api/ai-insights'), bindings);
+  await started;
+  rows = [{...rows[0], resolved_at: '2026-10-25 12:00:00'}];
+  const newer = await worker.fetch(request('/api/ai-insights'), bindings);
+  assert.equal((await newer.json()).insights, 'The login problem is resolved.');
+  finishFirst({response: 'The login problem is unresolved.'});
+  await first;
+  const cached = await worker.fetch(request('/api/ai-insights'), bindings);
+  assert.equal((await cached.json()).insights, 'The login problem is resolved.');
+  assert.equal(calls, 2, 'unchanged snapshot must reuse its cached result');
+});

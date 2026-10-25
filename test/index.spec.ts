@@ -50,3 +50,21 @@ describe('read APIs with isolated local bindings', () => {
     expect(await response.json()).toEqual({ error: 'Feedback not found' });
   });
 });
+
+
+it('insight inputs include committed resolution state from D1', async () => {
+  await env.DB.exec('CREATE TABLE IF NOT EXISTS feedback (id INTEGER PRIMARY KEY, title TEXT, description TEXT, category TEXT, sentiment TEXT, created_at TEXT, resolved_at TEXT)');
+  await env.DB.prepare("INSERT INTO feedback (id,title,created_at) VALUES (123,?,datetime('now'))").bind('Insight resolution fixture').run();
+  const inputs: string[] = [];
+  const bindings = {...env, AI: {run: async (_model: string, options: {messages: {content: string}[]}) => {
+    inputs.push(options.messages[1].content);
+    return {response: `Controlled result ${inputs.length}`};
+  }} as unknown as Ai};
+  const insights = () => worker.fetch(new Request('https://example.com/api/ai-insights', {headers: auth}), bindings);
+  expect((await insights()).status).toBe(200);
+  await env.DB.prepare("UPDATE feedback SET resolved_at='2026-10-25 12:00:00' WHERE id=123").run();
+  expect((await insights()).status).toBe(200);
+  expect(inputs).toHaveLength(2);
+  expect(inputs[0]).toContain('"resolved_at":null');
+  expect(inputs[1]).toContain('"resolved_at":"2026-10-25 12:00:00"');
+});
