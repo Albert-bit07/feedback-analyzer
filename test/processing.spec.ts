@@ -2,7 +2,7 @@ import { env, SELF } from 'cloudflare:test';
 import { beforeEach, expect, it } from 'vitest';
 import first from '../migrations/0001_ingestion.sql?raw';
 import second from '../migrations/0002_processing.sql?raw';
-import { processOne, withTimeout } from '../src/processing';
+import { processOne, withTimeout, validateAnalysis } from '../src/processing';
 const auth = { Authorization: 'Basic '+btoa('analyst:test-only-password') };
 const analysis = { sentiment:'negative',category:'performance',summary:'Search is slow.' };
 let id: number;
@@ -102,4 +102,11 @@ it('grants only one live lease to concurrent processors', async () => {
   expect(results.sort()).toEqual([false,true]);
   expect(calls).toBe(1);
   expect(await env.DB.prepare('SELECT COUNT(*) AS n FROM analyses').first('n')).toBe(1);
+});
+
+it('rejects non-string sentiment values rather than coercing model output', () => {
+  for (const sentiment of [['negative'], { toString: () => 'negative' }, null, 1]) {
+    expect(() => validateAnalysis({ ...analysis, sentiment })).toThrow('Invalid analysis');
+  }
+  expect(validateAnalysis(analysis)).toEqual(analysis);
 });
