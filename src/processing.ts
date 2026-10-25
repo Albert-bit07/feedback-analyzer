@@ -10,7 +10,7 @@ type Analyze = (input: Input) => Promise<unknown>;
 export function validateAnalysis(value: unknown): Analysis {
   if (!value || typeof value !== 'object') throw new Error('Invalid analysis');
   const output = value as Record<string, unknown>;
-  if (!['positive', 'neutral', 'negative'].includes(String(output.sentiment)) ||
+  if (typeof output.sentiment !== 'string' || !['positive', 'neutral', 'negative'].includes(output.sentiment) ||
       typeof output.category !== 'string' || !output.category.trim() || output.category.length > 80 ||
       typeof output.summary !== 'string' || !output.summary.trim() || output.summary.length > 1000) throw new Error('Invalid analysis');
   return { sentiment: output.sentiment as Analysis['sentiment'], category: output.category.trim(), summary: output.summary.trim() };
