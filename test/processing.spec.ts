@@ -3,6 +3,7 @@ import { beforeEach, expect, it } from 'vitest';
 import first from '../migrations/0001_ingestion.sql?raw';
 import second from '../migrations/0002_processing.sql?raw';
 import { processOne, withTimeout, validateAnalysis } from '../src/processing';
+import { processingHealth } from '../src/processing_health';
 const auth = { Authorization: 'Basic '+btoa('analyst:test-only-password') };
 const analysis = { sentiment:'negative',category:'performance',summary:'Search is slow.' };
 let id: number;
@@ -109,4 +110,35 @@ it('rejects non-string sentiment values rather than coercing model output', () =
     expect(() => validateAnalysis({ ...analysis, sentiment })).toThrow('Invalid analysis');
   }
   expect(validateAnalysis(analysis)).toEqual(analysis);
+});
+
+
+it('reports ready work, backoff, expired leases and backlog age from one snapshot', async () => {
+  const now = Date.parse('2026-10-25T12:00:00Z');
+  await env.DB.prepare("UPDATE processing_jobs SET created_at='2026-10-25 11:55:00' WHERE feedback_id=?").bind(id).run();
+  const states = [
+    ['pending', 1, now+1000, null],
+    ['processing', 2, 0, now+1000],
+    ['processing', 3, 0, now],
+    ['failed', 5, 0, null],
+    ['completed', 1, 0, null],
+  ];
+  for (let i=0; i<states.length; i++) {
+    await env.DB.prepare("INSERT INTO feedback(id,title,source) VALUES (?, 'Fixture', 'test')").bind(100+i).run();
+    await env.DB.prepare("INSERT INTO processing_jobs(feedback_id,status,attempts,next_attempt_ms,lease_until,created_at) VALUES (?,?,?,?,?,'2026-10-25 11:59:00')").bind(100+i,...states[i]).run();
+  }
+  expect(await processingHealth(env.DB,now)).toEqual({pending:2,processing:2,completed:1,failed:1,
+    ready_pending:1,delayed_pending:1,expired_leases:1,retried_jobs:3,oldest_active_age_seconds:300});
+  const response = await SELF.fetch('https://example.com/api/processing/health',{headers:auth});
+  expect(response.status).toBe(200);
+  expect(response.headers.get('Cache-Control')).toBe('no-store');
+  expect((await response.json<{failed:number}>()).failed).toBe(1);
+  expect((await SELF.fetch('https://example.com/api/processing/health')).status).toBe(401);
+});
+it('distinguishes an empty backlog from zero age and clamps future timestamps', async () => {
+  await env.DB.prepare("UPDATE processing_jobs SET created_at='2026-10-26 12:00:00'").run();
+  expect((await processingHealth(env.DB,Date.parse('2026-10-25T12:00:00Z'))).oldest_active_age_seconds).toBe(0);
+  await env.DB.prepare('DELETE FROM processing_jobs').run();
+  expect(await processingHealth(env.DB)).toEqual({pending:0,processing:0,completed:0,failed:0,
+    ready_pending:0,delayed_pending:0,expired_leases:0,retried_jobs:0,oldest_active_age_seconds:null});
 });

@@ -63,6 +63,7 @@ Curl prompts for the password. Retry with the same key and content to receive th
 | `/api/processing` | GET | Counts, attempt totals and oldest creation time by processing state |
 | `/api/stats`, `/api/top-issues`, `/api/recent` | GET | SQL summaries and recent records |
 | `/api/repeat-users`, `/api/longest-unresolved` | GET | Reporter and age summaries |
+| `/api/processing/health` | GET | Uncached current job counts, ready/delayed work, expired leases, retries and oldest active age |
 | `/api/ai-insights` | GET | Optional generated summary, cached for 600 seconds |
 
 Request bodies are limited to 16 KiB while streaming, with title/description/source limits of 200/8000/80 characters. Cross-site browser requests are rejected; there is no wildcard CORS. Authenticated responses use `Cache-Control: no-store`. The browser retains a submission's idempotency key for retries until success or content changes; this key is not persisted across page reloads.
@@ -97,3 +98,10 @@ The analysis key includes feedback ID, the accepted input fingerprint, model ID 
 This implementation polls D1 directly; it does not require Cloudflare Queues or claim queue-delivery testing. If a queue is added later, D1 should remain the recovery source of truth. Throughput is intentionally bounded and unbenchmarked. Provider timeouts may leave an upstream inference running, but late results are not persisted by the timed-out attempt.
 
 Tests inject controlled model responses, failures, stale leases and duplicate work. Real inference and cron delivery are not tested against a deployed Cloudflare account. For local scheduled-handler testing, run Wrangler with `--test-scheduled` and invoke its local scheduled endpoint deliberately; this can call remote Workers AI. Normal `/triage` reads do not invoke inference. Configure the secret and apply both migrations before deployment.
+
+
+### Processing visibility
+
+The `/triage` page refreshes processing health alongside its reports. The health endpoint uses one D1 aggregate query for a consistent snapshot: pending and processing counts, completed and failed jobs, pending work ready now versus delayed by backoff, and expired processing leases. Expired leases are a subset of processing jobs; they are recovered or moved to terminal failure by the next processor invocation, not by reading this endpoint.
+
+`oldest_active_age_seconds` measures time since submission for pending/processing jobs, including backoff; it is `null` when there is no active backlog. Failed jobs require explicit replay and appear separately. `retried_jobs` counts current job rows with more than one attempt, including completed/failed jobs; replay resets attempts, so it is not a lifetime retry or usage counter. Health reads are authenticated and uncached. They do not claim inference throughput, model quality, or deployed monitoring coverage.
