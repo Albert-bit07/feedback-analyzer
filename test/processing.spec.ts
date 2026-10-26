@@ -3,7 +3,7 @@ import { env, SELF } from 'cloudflare:test';
 import { beforeEach, expect, it } from 'vitest';
 import first from '../migrations/0001_ingestion.sql?raw';
 import second from '../migrations/0002_processing.sql?raw';
-import { processOne, withTimeout, validateAnalysis } from '../src/processing';
+import { MODEL, PROMPT_VERSION, processOne, withTimeout, validateAnalysis } from '../src/processing';
 import { processingHealth } from '../src/processing_health';
 const auth = { Authorization: 'Basic '+btoa('analyst:test-only-password') };
 const analysis = { sentiment:'negative',category:'performance',summary:'Search is slow.' };
@@ -129,7 +129,7 @@ it('reports ready work, backoff, expired leases and backlog age from one snapsho
     await env.DB.prepare("INSERT INTO processing_jobs(feedback_id,status,attempts,next_attempt_ms,lease_until,created_at) VALUES (?,?,?,?,?,'2026-10-25 11:59:00')").bind(100+i,...states[i]).run();
   }
   expect(await processingHealth(env.DB,now)).toEqual({pending:2,processing:2,completed:1,failed:1,
-    ready_pending:1,delayed_pending:1,expired_leases:1,retried_jobs:3,oldest_active_age_seconds:300});
+    ready_pending:1,delayed_pending:1,expired_leases:1,retried_jobs:3,oldest_active_age_seconds:300,inference_samples:0,average_inference_ms:null,max_inference_ms:null});
   const response = await SELF.fetch('https://example.com/api/processing/health',{headers:auth});
   expect(response.status).toBe(200);
   expect(response.headers.get('Cache-Control')).toBe('no-store');
@@ -141,7 +141,7 @@ it('distinguishes an empty backlog from zero age and clamps future timestamps', 
   expect((await processingHealth(env.DB,Date.parse('2026-10-25T12:00:00Z'))).oldest_active_age_seconds).toBe(0);
   await env.DB.prepare('DELETE FROM processing_jobs').run();
   expect(await processingHealth(env.DB)).toEqual({pending:0,processing:0,completed:0,failed:0,
-    ready_pending:0,delayed_pending:0,expired_leases:0,retried_jobs:0,oldest_active_age_seconds:null});
+    ready_pending:0,delayed_pending:0,expired_leases:0,retried_jobs:0,oldest_active_age_seconds:null,inference_samples:0,average_inference_ms:null,max_inference_ms:null});
 });
 
 const corrected = {sentiment:'positive',category:'usability',summary:'Reviewed by an analyst.',reason:'The report was misunderstood.'};
@@ -229,4 +229,22 @@ it('classifies malformed provider envelopes and JSON without exposing raw output
     expect(await env.DB.prepare('SELECT last_error FROM processing_jobs WHERE feedback_id=?').bind(id).first('last_error')).toBe('invalid_analysis');
   }
   expect(await env.DB.prepare('SELECT COUNT(*) AS n FROM analyses').first('n')).toBe(0);
+});
+
+it('reports inference latency only for current inputs and model/prompt versions', async () => {
+  const hash = await env.DB.prepare('SELECT request_hash FROM feedback WHERE id=?').bind(id).first<string>('request_hash');
+  const add = (feedbackId:number,inputHash:string,model:string,prompt:string,ms:number) => env.DB.prepare(
+    "INSERT INTO analyses(feedback_id,input_hash,model_version,prompt_version,sentiment,category,summary,inference_ms) VALUES (?,?,?,?,'neutral','test','Fixture',?)"
+  ).bind(feedbackId,inputHash,model,prompt,ms).run();
+  await add(id,hash!,MODEL,PROMPT_VERSION,100);
+  await add(id,hash!,MODEL,'old-prompt',9000);
+  await add(id,hash!,'old-model',PROMPT_VERSION,9000);
+  await add(id,'stale-input',MODEL,PROMPT_VERSION,9000);
+  await env.DB.prepare("INSERT INTO feedback(id,title,source,request_hash) VALUES (999,'Fixture','test','second-input')").run();
+  await add(999,'second-input',MODEL,PROMPT_VERSION,300);
+  expect(await processingHealth(env.DB)).toMatchObject({pending:1,inference_samples:2,average_inference_ms:200,max_inference_ms:300});
+  const response = await SELF.fetch('https://example.com/api/processing/health',{headers:auth});
+  expect(await response.json()).toMatchObject({inference_samples:2,average_inference_ms:200,max_inference_ms:300});
+  await env.DB.prepare("UPDATE feedback SET request_hash='changed' WHERE id=999").run();
+  expect(await processingHealth(env.DB)).toMatchObject({inference_samples:1,average_inference_ms:100,max_inference_ms:100});
 });

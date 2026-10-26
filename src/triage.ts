@@ -70,7 +70,9 @@ async function refreshHealth() {
     element.textContent = 'Ready: ' + health.ready_pending + ' · Delayed: ' + health.delayed_pending +
       ' · Processing: ' + health.processing + ' (expired leases: ' + health.expired_leases + ')' +
       ' · Failed: ' + health.failed + ' · Completed: ' + health.completed +
-      ' · Retried jobs: ' + health.retried_jobs + ' · Oldest active job: ' + age;
+      ' · Retried jobs: ' + health.retried_jobs + ' · Oldest active job: ' + age +
+      (health.inference_samples > 0 ? ' · Inference: ' + health.inference_samples + ' samples, average ' +
+        health.average_inference_ms + ' ms, max ' + health.max_inference_ms + ' ms' : ' · Inference: no samples');
   } catch (error) { element.textContent = 'Processing health unavailable. Refresh to retry.'; }
 }
 let before = null;
