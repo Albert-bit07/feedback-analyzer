@@ -8,8 +8,9 @@
     "start": "wrangler dev",
     "test": "vitest",
     "cf-typegen": "wrangler types",
-    "test:security": "node --test test/security.test.mjs",
-    "typecheck": "tsc --noEmit && tsc -p test/tsconfig.json --noEmit"
+    "test:security": "node --test test/*.test.mjs",
+    "typecheck": "tsc --noEmit && tsc -p test/tsconfig.json --noEmit",
+    "evaluate": "node scripts/evaluate.mjs"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "^1.4.7",
