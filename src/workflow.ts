@@ -1,4 +1,4 @@
-import { MODEL, PROMPT_VERSION } from './processing.ts';
+import { MODEL, PROMPT_VERSION, validateAnalysis } from './processing.ts';
 import { processingHealth } from './processing_health.ts';
 import type { Env } from './index';
 
@@ -58,12 +58,46 @@ export async function workflow(request: Request, env: Env): Promise<Response | n
     return json({ id: row.id, processing: 'accepted', location: `/api/feedback/${row.id}` }, 202);
   }
   if (path === '/api/triage' && request.method === 'GET') {
-    const rows = await env.DB.prepare(`SELECT f.id, f.title, f.description, f.source, f.created_at, f.resolved_at,
-      j.status AS processing_status, j.attempts, j.last_error, j.next_attempt_ms, a.summary AS analysis_summary, a.sentiment AS analysis_sentiment, a.inference_ms
+    const rows = await env.DB.prepare(`SELECT f.id, f.title, f.description, f.source, f.created_at, f.resolved_at, f.request_hash AS input_hash,
+      COALESCE(c.revision,0) AS correction_revision, c.summary AS correction_summary, c.category AS correction_category, c.sentiment AS correction_sentiment, c.reason AS correction_reason,
+      j.status AS processing_status, j.attempts, j.last_error, j.next_attempt_ms, a.category AS analysis_category, a.summary AS analysis_summary, a.sentiment AS analysis_sentiment, a.inference_ms
       FROM feedback f LEFT JOIN processing_jobs j ON j.feedback_id = f.id
       LEFT JOIN analyses a ON a.feedback_id=f.id AND a.input_hash=f.request_hash AND a.model_version=? AND a.prompt_version=?
+      LEFT JOIN analysis_corrections c ON c.feedback_id=f.id AND c.input_hash=f.request_hash AND
+        c.revision=(SELECT MAX(revision) FROM analysis_corrections WHERE feedback_id=f.id AND input_hash=f.request_hash)
       ORDER BY f.id DESC LIMIT 100`).bind(MODEL,PROMPT_VERSION).all();
     return json(rows.results);
+  }
+  const correction = path.match(/^\/api\/feedback\/([1-9][0-9]*)\/corrections$/);
+  if (correction && (request.method === 'POST' || request.method === 'GET')) {
+    const id = Number(correction[1]);
+    if (!Number.isSafeInteger(id)) return json({ error: 'Invalid feedback ID' }, 400);
+    if (!await env.DB.prepare('SELECT id FROM feedback WHERE id=?').bind(id).first()) return json({ error: 'Feedback not found' }, 404);
+    if (request.method === 'GET') {
+      const history = await env.DB.prepare(`SELECT input_hash,revision,sentiment,category,summary,reason,created_at
+        FROM analysis_corrections WHERE feedback_id=? ORDER BY created_at DESC,rowid DESC LIMIT 100`).bind(id).all();
+      return json(history.results);
+    }
+    let output: ReturnType<typeof validateAnalysis>, reason: string, inputHash: string, revision: number;
+    try {
+      const body = await readBody(request);
+      output = validateAnalysis(body);
+      reason = field(body, 'reason', 500);
+      inputHash = field(body, 'input_hash', 64);
+      if (!/^[a-f0-9]{64}$/.test(inputHash) || !Number.isSafeInteger(body.expected_revision) ||
+          Number(body.expected_revision) < 0 || Number(body.expected_revision) >= Number.MAX_SAFE_INTEGER) throw new Error('version');
+      revision = Number(body.expected_revision);
+    } catch (error) {
+      return json({ error: 'Supply valid analysis, reason (1–500), input_hash and nonnegative expected_revision' }, error instanceof Error && error.message === 'size' ? 413 : 400);
+    }
+    // One conditional insert checks both versions and appends history atomically.
+    // A machine rerun writes analyses, never this independently reviewed record.
+    const saved = await env.DB.prepare(`INSERT INTO analysis_corrections(feedback_id,input_hash,revision,sentiment,category,summary,reason)
+      SELECT id,request_hash,?,?,?,?,? FROM feedback
+      WHERE id=? AND request_hash=? AND ?=COALESCE((SELECT MAX(revision) FROM analysis_corrections WHERE feedback_id=? AND input_hash=?),0)
+      RETURNING revision`).bind(revision+1,output.sentiment,output.category,output.summary,reason,id,inputHash,revision,id,inputHash).first<{revision:number}>();
+    return saved ? json({id,input_hash:inputHash,revision:saved.revision},201)
+      : json({error:'Feedback or correction changed. Refresh before saving again.'},409);
   }
   const replay = path.match(/^\/api\/feedback\/([1-9][0-9]*)\/replay$/);
   if (replay && request.method === 'POST') {
