@@ -191,3 +191,42 @@ it('validates correction fields, authentication and missing records', async () =
   expect((await SELF.fetch('https://example.com/api/feedback/99999/corrections',{headers:auth})).status).toBe(404);
   expect(await env.DB.prepare('SELECT COUNT(*) AS n FROM analysis_corrections').first('n')).toBe(0);
 });
+
+it('records inference duration without job acquisition or input-read time', async () => {
+  const times = [1000, 1400, 1475];
+  await processOne(env,async()=>analysis,()=>times.shift() ?? 1475);
+  expect(await env.DB.prepare('SELECT inference_ms FROM analyses').first('inference_ms')).toBe(75);
+});
+it('distinguishes safe failure codes and clears them after a successful retry', async () => {
+  const code = () => env.DB.prepare('SELECT last_error FROM processing_jobs WHERE feedback_id=?').bind(id).first('last_error');
+  await processOne(env,async()=>{throw new Error('private provider token');},()=>0);
+  expect(await code()).toBe('inference_failed');
+  await processOne(env,()=>withTimeout(new Promise(()=>{}),1),()=>60000);
+  expect(await code()).toBe('inference_timeout');
+  await processOne(env,async()=>({sentiment:'bad',summary:'private report'}),()=>180000);
+  expect(await code()).toBe('invalid_analysis');
+  await env.DB.prepare("CREATE TRIGGER reject_diagnostic_commit BEFORE UPDATE ON processing_jobs WHEN NEW.status='completed' BEGIN SELECT RAISE(ABORT,'private storage details'); END").run();
+  await processOne(env,async()=>analysis,()=>420000);
+  expect(await code()).toBe('persistence_failed');
+  expect(await env.DB.prepare('SELECT COUNT(*) AS n FROM analyses').first('n')).toBe(0);
+  await env.DB.exec('DROP TRIGGER reject_diagnostic_commit');
+  await processOne(env,async()=>analysis,()=>900000);
+  expect((await job())?.status).toBe('completed');
+  expect(await code()).toBe(null);
+});
+it('classifies missing input versions without invoking inference', async () => {
+  await env.DB.prepare('UPDATE feedback SET request_hash=NULL WHERE id=?').bind(id).run();
+  let calls=0;
+  await processOne(env,async()=>{calls++;return analysis;},()=>0);
+  expect(calls).toBe(0);
+  expect(await env.DB.prepare('SELECT last_error FROM processing_jobs WHERE feedback_id=?').bind(id).first('last_error')).toBe('input_failed');
+});
+it('classifies malformed provider envelopes and JSON without exposing raw output', async () => {
+  for (const response of [null, {}, {response:'private malformed output'}, {response:'x'.repeat(8193)}]) {
+    await env.DB.prepare("UPDATE processing_jobs SET status='pending',attempts=0,next_attempt_ms=0 WHERE feedback_id=?").bind(id).run();
+    const bindings = {...env, AI:{run:async()=>response} as unknown as typeof env.AI};
+    await processOne(bindings,undefined,()=>0);
+    expect(await env.DB.prepare('SELECT last_error FROM processing_jobs WHERE feedback_id=?').bind(id).first('last_error')).toBe('invalid_analysis');
+  }
+  expect(await env.DB.prepare('SELECT COUNT(*) AS n FROM analyses').first('n')).toBe(0);
+});

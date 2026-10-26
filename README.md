@@ -129,3 +129,29 @@ that cursor, in descending order. The response remains a JSON array; use the las
 ID of a full 100-row page for the next request. A shorter or empty page ends the
 list. Concurrent inserts do not shift older pages, but this is not a historical
 snapshot: processing and resolution state remain live. Authentication is required.
+
+### Processing diagnostics
+
+The triage API and dashboard expose fixed `last_error` codes without storing
+raw exception messages or model output:
+
+| Code | Meaning |
+| --- | --- |
+| `input_failed` | Input could not be read or has no version fingerprint. |
+| `inference_failed` | The inference call failed. |
+| `inference_timeout` | The inference time budget expired. |
+| `invalid_analysis` | The response envelope, JSON or analysis fields were invalid. |
+| `persistence_failed` | The transaction publishing analysis and completion failed. |
+| `attempt_limit` | A worker's final lease expired before it completed. |
+
+These codes describe the last recorded failure, not a lifetime error counter.
+Existing rows may retain the old `processing_failed` code until retried; a
+successful retry clears the error. Lease fencing and exponential retry behavior
+are unchanged. If D1 itself cannot save failure state, the scheduled invocation
+fails and the lease-recovery path handles the job after expiry.
+
+New `inference_ms` values measure elapsed time around the inference call and
+response parsing, excluding job acquisition and input reads. Previously stored
+values included that setup time and are not rewritten. This is local elapsed
+time, not a provider-side compute or billing measurement. A timeout stops
+waiting for the result; it does not guarantee cancellation of the provider call.
