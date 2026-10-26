@@ -155,3 +155,59 @@ response parsing, excluding job acquisition and input reads. Previously stored
 values included that setup time and are not rewritten. This is local elapsed
 time, not a provider-side compute or billing measurement. A timeout stops
 waiting for the result; it does not guarantee cancellation of the provider call.
+
+### Offline analysis evaluation
+
+Run saved predictions against independently labeled feedback with Node 24:
+
+```bash
+npm run --silent evaluate -- labels.json predictions.json > evaluation.json
+```
+
+The tool does not call a model or access D1. Supply two JSON files:
+
+```json
+{
+  "dataset_id": "my-held-out-feedback-v1",
+  "provenance": "Describe collection permission, sampling and who labeled it",
+  "examples": [
+    {"id": "report-1", "sentiment": "negative", "category": "performance"}
+  ]
+}
+```
+
+```json
+{
+  "model_version": "actual model used for this run",
+  "prompt_version": "actual prompt used for this run",
+  "predictions": [
+    {"id": "report-1", "output": {"sentiment": "negative", "category": "performance", "summary": "Search is slow."}}
+  ]
+}
+```
+
+These are illustrative schema examples, not a measured dataset. Generate outputs
+from the corresponding original feedback separately, using the recorded model
+and prompt versions. Keep IDs unique and stable. Omit a prediction when the call
+failed; malformed output may be included and is counted as invalid. Unknown or
+duplicate prediction IDs, invalid labels and empty datasets reject the run.
+
+The JSON report includes input-file SHA-256 hashes, metadata, counts, sentiment
+confusion (including missing/invalid outputs), and per-ID mismatches. Accuracy
+uses **all labeled examples** as its denominator; failed calls cannot inflate
+scores by disappearing. Output validity reuses the serving validator. Category
+matching is exact and case-sensitive after whitespace trimming: define a label
+taxonomy before evaluation. The current model's open-ended categories can be
+semantically similar yet score as different; inspect those mismatches manually.
+
+Reports omit original feedback and generated summaries, but retain IDs and labels;
+treat them according to the dataset's access rules. Provenance and model versions
+are supplied by the operator, not independently verified by the tool. File hashes
+identify inputs; they do not establish permission, independence or label quality.
+
+Keep evaluation examples out of prompt tuning, report label distribution and
+sample size, and review summary faithfulness and disagreement separately. This
+harness measures sentiment/category agreement and schema validity; it does not
+measure summary quality, duplicate detection, real user utility or production
+latency. Bundled tests use handwritten synthetic cases only. **No live model
+quality result has been established by those tests.**
