@@ -78,7 +78,9 @@ npx wrangler deploy --dry-run
 npm audit
 ```
 
-CI runs source and test type checks, Node security regressions and local Workers/D1 integration tests. Tests cover concurrent duplicate submissions, mismatched idempotency payloads, rollback on job-write failure, input limits, authentication, cross-site rejection, resolve/reopen history and summary freshness. Tests use synthetic data and do not invoke remote inference. The dependency update reports zero npm advisories at its verification date; this is not a guarantee against future advisories.
+CI runs source and test type checks, Node security regressions, local Workers/D1 integration tests and an npm audit gate for moderate-or-higher advisories, including development dependencies. Tests cover concurrent duplicate submissions, mismatched idempotency payloads, rollback on job-write failure, input limits, authentication, cross-site rejection, resolve/reopen history and summary freshness. Tests use synthetic data and do not invoke remote inference. The dependency update reports zero npm advisories at its verification date; this is not a guarantee against future advisories.
+
+The Cloudflare test toolchain currently pins affected transitive versions. Scoped npm overrides select Zod 4.6.6 for `@cloudflare/vitest-plugin` and Undici 7.30.1 for Miniflare. Remove these overrides once upstream pins patched versions, then rerun `npm ci`, the tests, type checks and audit. Vitest remains on its compatible version 4 line; no major-version downgrade is required to clear the audit.
 
 ## Next milestones and trade-offs
 
