@@ -1,4 +1,9 @@
+import { MODEL, PROMPT_VERSION } from './processing.ts';
+
 export interface ProcessingHealth {
+  inference_samples: number;
+  average_inference_ms: number | null;
+  max_inference_ms: number | null;
   pending: number;
   processing: number;
   completed: number;
@@ -13,8 +18,12 @@ export interface ProcessingHealth {
 export async function processingHealth(db: D1Database, now = Date.now()): Promise<ProcessingHealth> {
   // One statement gives a consistent snapshot across all counters. Failed jobs
   // require explicit replay and are excluded from the active backlog age.
-  const result = await db.prepare(`WITH clock(now_ms) AS (VALUES (?))
-    SELECT
+  const result = await db.prepare(`WITH clock(now_ms) AS (VALUES (?)), latency AS (
+      SELECT COUNT(*) AS inference_samples, AVG(a.inference_ms) AS average_inference_ms,
+        MAX(a.inference_ms) AS max_inference_ms
+      FROM analyses a JOIN feedback f ON f.id=a.feedback_id AND f.request_hash=a.input_hash
+      WHERE a.model_version=? AND a.prompt_version=?
+    ), jobs AS (SELECT
       COUNT(CASE WHEN status='pending' THEN 1 END) AS pending,
       COUNT(CASE WHEN status='processing' THEN 1 END) AS processing,
       COUNT(CASE WHEN status='completed' THEN 1 END) AS completed,
@@ -25,7 +34,8 @@ export async function processingHealth(db: D1Database, now = Date.now()): Promis
       COUNT(CASE WHEN attempts>1 THEN 1 END) AS retried_jobs,
       MAX(CASE WHEN status IN ('pending','processing')
         THEN MAX(0, CAST(now_ms/1000 AS INTEGER)-CAST(strftime('%s',created_at) AS INTEGER)) END) AS oldest_active_age_seconds
-    FROM processing_jobs CROSS JOIN clock`).bind(now).first<ProcessingHealth>();
+    FROM processing_jobs CROSS JOIN clock)
+    SELECT * FROM jobs CROSS JOIN latency`).bind(now,MODEL,PROMPT_VERSION).first<ProcessingHealth>();
   if (!result) throw new Error('Processing health query returned no aggregate');
   return result;
 }
