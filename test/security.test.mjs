@@ -101,3 +101,27 @@ test('triage health renderer replaces stale counters when a refresh fails', asyn
   await vm.runInContext('refreshHealth()', context);
   assert.equal(rendered.textContent, 'Processing health unavailable. Refresh to retry.');
 });
+
+test('correction editor sends version guards and retains edits after a conflict', async () => {
+  const { triageHTML } = await import('../src/triage.ts');
+  const element = () => ({children: [], value:'', textContent:'', setAttribute() {}, append(...children) {this.children.push(...children);}});
+  let submitted;
+  const context = vm.createContext({
+    document: {getElementById: element, createElement: element},
+    row: {id:7,input_hash:'a'.repeat(64),correction_revision:2,analysis_summary:'Model summary',analysis_category:'UI',analysis_sentiment:'negative'},
+    fetch: async (_path, options) => { submitted = JSON.parse(options.body); return {ok:false,status:409,json:async()=>({error:'Feedback or correction changed. Refresh before saving again.'})}; },
+  });
+  const script = triageHTML.match(/<script>([\s\S]*?)<\/script>/)[1];
+  vm.runInContext(script.slice(0, script.indexOf('let pending = null;')), context);
+  const section = vm.runInContext('correctionEditor(row)', context);
+  const form = section.children[1];
+  form.children[2].children[0].value = 'My reviewed summary';
+  form.children[3].children[0].value = 'Checked the report';
+  await form.onsubmit({preventDefault() {}});
+  assert.equal(submitted.input_hash, 'a'.repeat(64));
+  assert.equal(submitted.expected_revision, 2);
+  assert.equal(submitted.summary, 'My reviewed summary');
+  assert.equal(form.children[2].children[0].value, 'My reviewed summary');
+  assert.match(form.children[5].textContent, /Refresh before saving/);
+  assert.equal(form.children[4].disabled, false);
+});

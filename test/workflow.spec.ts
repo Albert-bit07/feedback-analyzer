@@ -1,3 +1,4 @@
+import correctionMigration from '../migrations/0003_corrections.sql?raw';
 import { env, SELF } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
 import migration from '../migrations/0001_ingestion.sql?raw';
@@ -12,8 +13,8 @@ const status = (id: number, value: string) => SELF.fetch(`https://example.com/ap
   method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify({status: value}),
 });
 beforeEach(async () => {
-  await env.DB.exec('DROP TABLE IF EXISTS analyses; DROP TABLE IF EXISTS resolution_history; DROP TABLE IF EXISTS processing_jobs; DROP TABLE IF EXISTS feedback;');
-  await env.DB.batch((migration+processingMigration).split(';').map(s => s.trim()).filter(Boolean).map(s => env.DB.prepare(s)));
+  await env.DB.exec('DROP TABLE IF EXISTS analysis_corrections; DROP TABLE IF EXISTS analyses; DROP TABLE IF EXISTS resolution_history; DROP TABLE IF EXISTS processing_jobs; DROP TABLE IF EXISTS feedback;');
+  await env.DB.batch((migration+processingMigration+correctionMigration).split(';').map(s => s.trim()).filter(Boolean).map(s => env.DB.prepare(s)));
 });
 describe('authenticated ingestion and triage', () => {
   it('fails closed without configuration or valid credentials', async () => {

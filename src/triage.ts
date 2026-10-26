@@ -10,8 +10,57 @@ export const triageHTML = `<!doctype html>
 const message = document.getElementById('message');
 async function api(path, options) {
   const response = await fetch(path, options);
-  if (!response.ok) throw new Error('Request failed (' + response.status + '). Retry or check your credentials.');
+  if (!response.ok) {
+    let detail;
+    try { const body = await response.json(); if (typeof body.error === 'string') detail = body.error; } catch {}
+    throw new Error(detail || 'Request failed (' + response.status + '). Retry or check your credentials.');
+  }
   return response.json();
+}
+function correctionEditor(row) {
+  const section = document.createElement('details');
+  const heading = document.createElement('summary'); heading.textContent = 'Review or correct analysis';
+  const form = document.createElement('form');
+  const fields = {};
+  for (const [name, label, limit] of [['sentiment','Sentiment',0],['category','Category',80],['summary','Summary',1000],['reason','Reason for correction',500]]) {
+    const wrapper = document.createElement('label'); wrapper.textContent = label;
+    const input = document.createElement(name === 'sentiment' ? 'select' : 'textarea');
+    if (name === 'sentiment') {
+      for (const value of ['positive','neutral','negative']) {
+        const option = document.createElement('option'); option.value = value; option.textContent = value; input.append(option);
+      }
+    } else input.maxLength = limit;
+    input.required = true;
+    input.value = name === 'reason' ? '' : (row['correction_' + name] || row['analysis_' + name] || (name === 'sentiment' ? 'neutral' : ''));
+    fields[name] = input; wrapper.append(input); form.append(wrapper);
+  }
+  const save = document.createElement('button'); save.textContent = 'Save correction';
+  const notice = document.createElement('p'); notice.setAttribute('role','status');
+  form.append(save,notice);
+  form.onsubmit = async event => {
+    event.preventDefault(); save.disabled = true;
+    const body = {input_hash:row.input_hash,expected_revision:row.correction_revision};
+    for (const name of Object.keys(fields)) body[name] = fields[name].value;
+    try { await api('/api/feedback/' + row.id + '/corrections',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); await refresh(); }
+    catch (error) { notice.textContent = error.message; save.disabled = false; }
+  };
+  const history = document.createElement('button'); history.type = 'button'; history.textContent = 'Show correction history';
+  const entries = document.createElement('div');
+  history.onclick = async () => {
+    history.disabled = true;
+    try {
+      const rows = await api('/api/feedback/' + row.id + '/corrections'); entries.replaceChildren();
+      if (!rows.length) entries.textContent = 'No corrections yet.';
+      for (const entry of rows) {
+        const line = document.createElement('p');
+        line.textContent = 'Revision ' + entry.revision + ' · ' + entry.created_at + ' · ' + entry.sentiment + ' · ' + entry.category + ' · ' + entry.summary + ' · Reason: ' + entry.reason + (entry.input_hash === row.input_hash ? '' : ' · Previous input version');
+        entries.append(line);
+      }
+    } catch (error) { entries.textContent = error.message; }
+    finally { history.disabled = false; }
+  };
+  section.append(heading,form,history,entries);
+  return section;
 }
 async function refreshHealth() {
   const element = document.getElementById('processing-health');
@@ -43,9 +92,15 @@ async function refresh() {
     card.append(title,detail,state,button);
     if (row.analysis_summary) {
       const analysis = document.createElement('p');
-      analysis.textContent = 'Analysis: ' + row.analysis_summary + ' · ' + row.analysis_sentiment + ' · ' + row.inference_ms + ' ms';
+      analysis.textContent = 'Model analysis: ' + row.analysis_summary + ' · ' + row.analysis_sentiment + ' · ' + row.inference_ms + ' ms';
       card.append(analysis);
     }
+    if (row.correction_revision) {
+      const reviewed = document.createElement('p');
+      reviewed.textContent = 'Analyst correction (revision ' + row.correction_revision + '): ' + row.correction_summary + ' · ' + row.correction_sentiment + ' · ' + row.correction_category + ' · Reason: ' + row.correction_reason;
+      card.append(reviewed);
+    }
+    if (row.input_hash) card.append(correctionEditor(row));
     if (row.last_error) {
       const error = document.createElement('small'); error.textContent = 'Processing error: ' + row.last_error;
       card.append(error);

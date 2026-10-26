@@ -1,3 +1,4 @@
+import correctionMigration from '../migrations/0003_corrections.sql?raw';
 import { env, SELF } from 'cloudflare:test';
 import { beforeEach, expect, it } from 'vitest';
 import first from '../migrations/0001_ingestion.sql?raw';
@@ -8,8 +9,8 @@ const auth = { Authorization: 'Basic '+btoa('analyst:test-only-password') };
 const analysis = { sentiment:'negative',category:'performance',summary:'Search is slow.' };
 let id: number;
 beforeEach(async () => {
-  await env.DB.exec('DROP TABLE IF EXISTS analyses; DROP TABLE IF EXISTS resolution_history; DROP TABLE IF EXISTS processing_jobs; DROP TABLE IF EXISTS feedback;');
-  await env.DB.batch((first+second).split(';').map(s=>s.trim()).filter(Boolean).map(s=>env.DB.prepare(s)));
+  await env.DB.exec('DROP TABLE IF EXISTS analysis_corrections; DROP TABLE IF EXISTS analyses; DROP TABLE IF EXISTS resolution_history; DROP TABLE IF EXISTS processing_jobs; DROP TABLE IF EXISTS feedback;');
+  await env.DB.batch((first+second+correctionMigration).split(';').map(s=>s.trim()).filter(Boolean).map(s=>env.DB.prepare(s)));
   const response = await SELF.fetch('https://example.com/api/feedback',{method:'POST',headers:{...auth,'Content-Type':'application/json','Idempotency-Key':'job-test'},body:JSON.stringify({title:'Slow',description:'Search is slow.',source:'test'})});
   expect(response.status).toBe(202);
   id = (await response.json<{id:number}>()).id;
@@ -141,4 +142,52 @@ it('distinguishes an empty backlog from zero age and clamps future timestamps', 
   await env.DB.prepare('DELETE FROM processing_jobs').run();
   expect(await processingHealth(env.DB)).toEqual({pending:0,processing:0,completed:0,failed:0,
     ready_pending:0,delayed_pending:0,expired_leases:0,retried_jobs:0,oldest_active_age_seconds:null});
+});
+
+const corrected = {sentiment:'positive',category:'usability',summary:'Reviewed by an analyst.',reason:'The report was misunderstood.'};
+async function correctionBody(expected_revision=0) {
+  const input_hash = await env.DB.prepare('SELECT request_hash FROM feedback WHERE id=?').bind(id).first<string>('request_hash');
+  return {...corrected,input_hash,expected_revision};
+}
+const saveCorrection = (body: unknown) => SELF.fetch(`https://example.com/api/feedback/${id}/corrections`, {
+  method:'POST',headers:{...auth,'Content-Type':'application/json'},body:JSON.stringify(body),
+});
+it('preserves corrections and their history when machine analysis completes', async () => {
+  const response = await saveCorrection(await correctionBody());
+  expect(response.status).toBe(201);
+  expect(response.headers.get('Cache-Control')).toBe('no-store');
+  await processOne(env,async()=>analysis,()=>1000);
+  const rows = await (await SELF.fetch('https://example.com/api/triage',{headers:auth})).json<Array<Record<string,unknown>>>();
+  expect(rows[0]).toMatchObject({analysis_summary:analysis.summary,correction_summary:corrected.summary,correction_revision:1});
+  expect(await env.DB.prepare('SELECT sentiment FROM feedback WHERE id=?').bind(id).first('sentiment')).toBe(null);
+  expect((await saveCorrection({...await correctionBody(1),summary:'Second review'})).status).toBe(201);
+  const history = await (await SELF.fetch(`https://example.com/api/feedback/${id}/corrections`,{headers:auth})).json<Array<Record<string,unknown>>>();
+  expect(history.map(row=>row.summary)).toEqual(['Second review',corrected.summary]);
+});
+it('permits only one correction for concurrent saves of the same revision', async () => {
+  const body = await correctionBody();
+  const responses = await Promise.all([saveCorrection(body),saveCorrection(body),saveCorrection(body)]);
+  expect(responses.map(response=>response.status).sort()).toEqual([201,409,409]);
+  expect(await env.DB.prepare('SELECT COUNT(*) AS n FROM analysis_corrections').first('n')).toBe(1);
+});
+it('rejects stale input and retains old corrections without applying them to new input', async () => {
+  const old = await correctionBody();
+  expect((await saveCorrection(old)).status).toBe(201);
+  await env.DB.prepare('UPDATE feedback SET request_hash=? WHERE id=?').bind('b'.repeat(64),id).run();
+  expect((await saveCorrection({...old,expected_revision:1})).status).toBe(409);
+  const rows = await (await SELF.fetch('https://example.com/api/triage',{headers:auth})).json<Array<Record<string,unknown>>>();
+  expect(rows[0]).toMatchObject({correction_revision:0,correction_summary:null});
+  expect((await saveCorrection(await correctionBody())).status).toBe(201);
+  expect(await env.DB.prepare('SELECT COUNT(*) AS n FROM analysis_corrections').first('n')).toBe(2);
+});
+it('validates correction fields, authentication and missing records', async () => {
+  const body = await correctionBody();
+  for (const change of [{reason:''},{reason:'x'.repeat(501)},{summary:'x'.repeat(1001)},
+    {sentiment:['positive']},{expected_revision:-1},{expected_revision:1.5},{expected_revision:'0'},{input_hash:'invalid'}]) {
+    expect((await saveCorrection({...body,...change})).status).toBe(400);
+  }
+  expect((await saveCorrection({...body,reason:'x'.repeat(17000)})).status).toBe(413);
+  expect((await SELF.fetch(`https://example.com/api/feedback/${id}/corrections`)).status).toBe(401);
+  expect((await SELF.fetch('https://example.com/api/feedback/99999/corrections',{headers:auth})).status).toBe(404);
+  expect(await env.DB.prepare('SELECT COUNT(*) AS n FROM analysis_corrections').first('n')).toBe(0);
 });
