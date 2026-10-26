@@ -125,3 +125,39 @@ test('correction editor sends version guards and retains edits after a conflict'
   assert.match(form.children[5].textContent, /Refresh before saving/);
   assert.equal(form.children[4].disabled, false);
 });
+
+test('triage pagination preserves the visible page on failure and refreshes its cursor', async () => {
+  const { triageHTML } = await import('../src/triage.ts');
+  const element = () => ({children:[],textContent:'',append(...children){this.children.push(...children);},replaceChildren(){this.children=[];}});
+  const elements = new Map();
+  const paths = [];
+  let fail = false;
+  const context = vm.createContext({document:{createElement:element,getElementById(id){if(!elements.has(id)) elements.set(id,element());return elements.get(id);}},
+    fetch:async path=>{
+      paths.push(path);
+      if(path==='/api/processing/health') return {ok:true,json:async()=>({})};
+      if(fail) return {ok:false,status:503,json:async()=>({error:'Try again'})};
+      const ids = path.includes('?') ? [5,4,3,2,1] : Array.from({length:100},(_,i)=>105-i);
+      return {ok:true,json:async()=>ids.map(id=>({id,title:'Report',description:'Body',source:'test'}))};
+    }});
+  const script = triageHTML.match(/<script>([\s\S]*?)<\/script>/)[1];
+  vm.runInContext(script.slice(0,script.indexOf('let pending = null;')),context);
+  await vm.runInContext('refresh()',context);
+  assert.equal(elements.get('items').children.length,100);
+  assert.equal(elements.get('newer').disabled,true);
+  fail=true;
+  await elements.get('older').onclick();
+  assert.equal(elements.get('items').children.length,100);
+  assert.equal(elements.get('newer').disabled,true);
+  assert.equal(elements.get('older').disabled,false);
+  fail=false;
+  await elements.get('older').onclick();
+  assert.equal(paths.at(-1),'/api/triage?before=6');
+  assert.equal(elements.get('items').children.length,5);
+  assert.equal(elements.get('older').disabled,true);
+  await vm.runInContext('refresh()',context);
+  assert.equal(paths.at(-1),'/api/triage?before=6');
+  await elements.get('newer').onclick();
+  assert.equal(paths.at(-1),'/api/triage');
+  assert.equal(elements.get('items').children.length,100);
+});

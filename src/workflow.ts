@@ -58,6 +58,10 @@ export async function workflow(request: Request, env: Env): Promise<Response | n
     return json({ id: row.id, processing: 'accepted', location: `/api/feedback/${row.id}` }, 202);
   }
   if (path === '/api/triage' && request.method === 'GET') {
+    const cursor = new URL(request.url).searchParams.get('before');
+    if (cursor !== null && (!/^[1-9][0-9]*$/.test(cursor) || !Number.isSafeInteger(Number(cursor)))) {
+      return json({ error: 'before must be a positive safe integer feedback ID' }, 400);
+    }
     const rows = await env.DB.prepare(`SELECT f.id, f.title, f.description, f.source, f.created_at, f.resolved_at, f.request_hash AS input_hash,
       COALESCE(c.revision,0) AS correction_revision, c.summary AS correction_summary, c.category AS correction_category, c.sentiment AS correction_sentiment, c.reason AS correction_reason,
       j.status AS processing_status, j.attempts, j.last_error, j.next_attempt_ms, a.category AS analysis_category, a.summary AS analysis_summary, a.sentiment AS analysis_sentiment, a.inference_ms
@@ -65,7 +69,8 @@ export async function workflow(request: Request, env: Env): Promise<Response | n
       LEFT JOIN analyses a ON a.feedback_id=f.id AND a.input_hash=f.request_hash AND a.model_version=? AND a.prompt_version=?
       LEFT JOIN analysis_corrections c ON c.feedback_id=f.id AND c.input_hash=f.request_hash AND
         c.revision=(SELECT MAX(revision) FROM analysis_corrections WHERE feedback_id=f.id AND input_hash=f.request_hash)
-      ORDER BY f.id DESC LIMIT 100`).bind(MODEL,PROMPT_VERSION).all();
+      WHERE (? IS NULL OR f.id < ?)
+      ORDER BY f.id DESC LIMIT 100`).bind(MODEL,PROMPT_VERSION,cursor === null ? null : Number(cursor),cursor === null ? null : Number(cursor)).all();
     return json(rows.results);
   }
   const correction = path.match(/^\/api\/feedback\/([1-9][0-9]*)\/corrections$/);
