@@ -12,9 +12,17 @@
     "typecheck": "tsc --noEmit && tsc -p test/tsconfig.json --noEmit"
   },
   "devDependencies": {
-    "@cloudflare/vitest-plugin": "^1.4.6",
+    "@cloudflare/vitest-plugin": "^1.4.7",
     "typescript": "^5.5.2",
-    "vitest": "^4.1.11",
-    "wrangler": "^4.151.3"
+    "vitest": "^4.1.12",
+    "wrangler": "^4.152.0"
+  },
+  "overrides": {
+    "@cloudflare/vitest-plugin": {
+      "zod": "4.6.6"
+    },
+    "miniflare": {
+      "undici": "7.30.1"
+    }
   }
 }
