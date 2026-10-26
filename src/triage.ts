@@ -5,7 +5,7 @@ export const triageHTML = `<!doctype html>
 <h1>Feedback triage</h1><p>Submit a report, inspect its processing state, and resolve or reopen it. <a href="/">Summary dashboard</a></p>
 <form id="submission"><h2>Submit feedback</h2><label>Title<input name="title" required maxlength="200"></label><label>Description<textarea name="description" required maxlength="8000"></textarea></label><label>Source<input name="source" required maxlength="80" value="manual"></label><button>Submit</button></form>
 <section aria-labelledby="processing-heading"><h2 id="processing-heading">Processing health</h2><p id="processing-health" role="status">Loading processing state…</p><small>Current job state. Retry counts reset when a failed job is replayed; this is not a lifetime usage metric.</small></section>
-<p id="message" role="status"></p><button id="refresh">Refresh</button><main id="items"></main>
+<p id="message" role="status"></p><button id="refresh">Refresh</button><main id="items"></main><nav aria-label="Feedback pages"><button id="newer" disabled>Newer reports</button> <button id="older" disabled>Older reports</button></nav>
 <script>
 const message = document.getElementById('message');
 async function api(path, options) {
@@ -73,11 +73,26 @@ async function refreshHealth() {
       ' · Retried jobs: ' + health.retried_jobs + ' · Oldest active job: ' + age;
   } catch (error) { element.textContent = 'Processing health unavailable. Refresh to retry.'; }
 }
-async function refresh() {
+let before = null;
+let previousPages = [];
+let lastId = null;
+let loading = false;
+let refreshQueue = Promise.resolve();
+function refresh() {
+  // Serialize refreshes so a mutation during an in-flight load is not lost.
+  refreshQueue = refreshQueue.catch(() => {}).then(renderPage);
+  return refreshQueue;
+}
+async function renderPage() {
+  loading = true;
+  const newer = document.getElementById('newer'), older = document.getElementById('older');
+  newer.disabled = older.disabled = true;
+  try {
   await refreshHealth();
-  const rows = await api('/api/triage');
+  const rows = await api('/api/triage' + (before === null ? '' : '?before=' + before));
+  lastId = rows.length === 100 ? rows[rows.length-1].id : null;
   const root = document.getElementById('items'); root.replaceChildren();
-  if (!rows.length) root.textContent = 'No feedback yet.';
+  if (!rows.length) root.textContent = before === null ? 'No feedback yet.' : 'No older feedback.';
   for (const row of rows) {
     const card = document.createElement('article');
     const title = document.createElement('h2'); title.textContent = '#' + row.id + ' ' + row.title;
@@ -116,7 +131,26 @@ async function refresh() {
     }
     root.append(card);
   }
+  } finally {
+    loading = false;
+    newer.disabled = previousPages.length === 0;
+    older.disabled = lastId === null;
+  }
 }
+async function changePage(older) {
+  if (loading) return;
+  const savedBefore = before, savedPages = [...previousPages];
+  if (older) { previousPages.push(before); before = lastId; }
+  else before = previousPages.pop();
+  try { await refresh(); }
+  catch (error) {
+    before = savedBefore; previousPages = savedPages;
+    document.getElementById('newer').disabled = previousPages.length === 0;
+    message.textContent = error.message;
+  }
+}
+document.getElementById('older').onclick = () => changePage(true);
+document.getElementById('newer').onclick = () => changePage(false);
 let pending = null;
 document.getElementById('submission').onsubmit = async event => {
   event.preventDefault();
@@ -126,7 +160,7 @@ document.getElementById('submission').onsubmit = async event => {
   button.disabled = true;
   try {
     const result = await api('/api/feedback',{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':pending.key},body});
-    pending = null; form.reset(); message.textContent = 'Feedback #' + result.id + ' saved. Analysis is pending.'; await refresh();
+    pending = null; before = null; previousPages = []; form.reset(); message.textContent = 'Feedback #' + result.id + ' saved. Analysis is pending.'; await refresh();
   } catch (error) { message.textContent = error.message; }
   finally { button.disabled = false; }
 };

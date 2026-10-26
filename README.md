@@ -116,3 +116,16 @@ Apply migration `0003_corrections.sql` through the existing migration command be
 `POST /api/feedback/:id/corrections` accepts `sentiment`, `category`, `summary`, `reason` (1–500 characters), `input_hash` and `expected_revision` from the current triage row. A single conditional insert verifies the current input hash and latest correction revision, then appends the next revision. Concurrent or stale saves return 409; refresh and review before retrying. A lost response does not create a duplicate revision on retry: the old expected revision conflicts, so inspect history to determine whether the first save succeeded.
 
 `GET /api/feedback/:id/corrections` returns the newest 100 history entries, including their input hashes. Triage displays only the latest correction for the current input; earlier-input corrections remain in history. Later model processing cannot erase a human correction. Legacy fixtures without an input hash are not editable through this workflow. All routes use the existing shared analyst authentication, so this is not named-reviewer attribution or a tamper-proof audit log. Corrections are shown in triage; legacy aggregate charts and AI insights still describe original reports and do not incorporate reviewed labels. No labeled model-quality evaluation is claimed.
+
+### Browsing older reports
+
+Triage displays 100 reports per page, newest first. Use **Older reports** and
+**Newer reports** to navigate; Refresh and triage actions retain the current page.
+A new submission returns to the newest page. Failed page requests retain the
+visible reports and can be retried.
+
+`GET /api/triage?before=<feedback-id>` returns reports with IDs strictly below
+that cursor, in descending order. The response remains a JSON array; use the last
+ID of a full 100-row page for the next request. A shorter or empty page ends the
+list. Concurrent inserts do not shift older pages, but this is not a historical
+snapshot: processing and resolution state remain live. Authentication is required.

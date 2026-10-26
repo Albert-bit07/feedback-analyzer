@@ -69,3 +69,22 @@ describe('authenticated ingestion and triage', () => {
     expect((await status(id,'invalid')).status).toBe(400);
   });
 });
+
+it('pages through older feedback without skips when new submissions arrive', async () => {
+  await env.DB.batch(Array.from({length:105},(_,i)=>env.DB.prepare('INSERT INTO feedback(id,title,source) VALUES (?,?,?)').bind(i+1,'Report '+(i+1),'test')));
+  const page = async (suffix='') => {
+    const response = await SELF.fetch('https://example.com/api/triage'+suffix,{headers:auth});
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
+    return response.json<Array<{id:number}>>();
+  };
+  const first = await page();
+  expect(first.map(row=>row.id)).toEqual(Array.from({length:100},(_,i)=>105-i));
+  await submit('new-arrival');
+  const second = await page('?before='+first.at(-1)!.id);
+  expect(second.map(row=>row.id)).toEqual([5,4,3,2,1]);
+  expect(await page('?before=1')).toEqual([]);
+  for (const cursor of ['0','-1','1.5','abc','9007199254740992','']) {
+    expect((await SELF.fetch('https://example.com/api/triage?before='+cursor,{headers:auth})).status).toBe(400);
+  }
+});
