@@ -25,6 +25,16 @@ interface Feedback {
 	upvotes?: number;
 }
 
+// Both queries bind MODEL and PROMPT_VERSION before any other parameters.
+const currentClassificationJoins = `
+  LEFT JOIN analyses a ON a.feedback_id=f.id AND a.input_hash=f.request_hash
+    AND a.model_version=? AND a.prompt_version=?
+  LEFT JOIN analysis_corrections c ON c.feedback_id=f.id AND c.input_hash=f.request_hash
+    AND c.revision=(SELECT MAX(revision) FROM analysis_corrections
+      WHERE feedback_id=f.id AND input_hash=f.request_hash)`;
+const currentSentiment = `COALESCE(c.sentiment,a.sentiment,
+  CASE WHEN f.request_hash IS NULL THEN f.sentiment END)`;
+
 export default {
     async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
         ctx.waitUntil(processPending(env));
@@ -102,14 +112,8 @@ async function getStats(env: Env, corsHeaders: Record<string, string>): Promise<
     // Keep source data, generated interpretation and human review separate.
     // Only the latest review of the current input overrides its current analysis.
     const aggregate = await env.DB.prepare(`WITH effective AS (
-      SELECT f.resolved_at, COALESCE(c.sentiment,a.sentiment,
-        CASE WHEN f.request_hash IS NULL THEN f.sentiment END) AS sentiment
-      FROM feedback f
-      LEFT JOIN analyses a ON a.feedback_id=f.id AND a.input_hash=f.request_hash
-        AND a.model_version=? AND a.prompt_version=?
-      LEFT JOIN analysis_corrections c ON c.feedback_id=f.id AND c.input_hash=f.request_hash
-        AND c.revision=(SELECT MAX(revision) FROM analysis_corrections
-          WHERE feedback_id=f.id AND input_hash=f.request_hash)
+      SELECT f.resolved_at, ${currentSentiment} AS sentiment
+      FROM feedback f ${currentClassificationJoins}
     ), scored AS (
       SELECT resolved_at, CASE sentiment WHEN 'positive' THEN 8.0
         WHEN 'neutral' THEN 5.0 WHEN 'negative' THEN 2.0 END AS score FROM effective
@@ -136,17 +140,19 @@ async function getStats(env: Env, corsHeaders: Record<string, string>): Promise<
 // Get top ranking issues (by count)
 async function getTopIssues(env: Env, corsHeaders: Record<string, string>): Promise<Response> {
 
-	const result = await env.DB.prepare(`
-		SELECT 
-			title,
-			COUNT(*) as count,
-			sentiment
-		FROM feedback
-		WHERE resolved_at IS NULL
-		GROUP BY title
-		ORDER BY count DESC
-		LIMIT 5
-	`).all();
+    const result = await env.DB.prepare(`WITH classified AS (
+      SELECT f.title, ${currentSentiment} AS sentiment
+      FROM feedback f ${currentClassificationJoins}
+      WHERE f.resolved_at IS NULL
+    ) SELECT title, COUNT(*) AS count,
+      CASE WHEN COUNT(DISTINCT sentiment)=1 AND COUNT(sentiment)=COUNT(*)
+        AND MIN(sentiment) IN ('positive','neutral','negative') THEN MIN(sentiment) END AS sentiment,
+      COUNT(CASE WHEN sentiment='positive' THEN 1 END) AS positive_count,
+      COUNT(CASE WHEN sentiment='neutral' THEN 1 END) AS neutral_count,
+      COUNT(CASE WHEN sentiment='negative' THEN 1 END) AS negative_count,
+      COUNT(CASE WHEN sentiment IS NULL OR sentiment NOT IN ('positive','neutral','negative') THEN 1 END) AS unclassified_count
+      FROM classified GROUP BY title ORDER BY count DESC,title ASC LIMIT 5
+    `).bind(MODEL,PROMPT_VERSION).all();
 
 	const response = JSON.stringify(result.results);
 
@@ -627,6 +633,7 @@ function getDashboardHTML(): string {
                                     <h3 class="text-white font-medium">\${escapeHtml(issue.title)}</h3>
                                     <div class="flex items-center gap-2 mt-1 flex-wrap">
                                         <span class="text-sm text-slate-400">\${escapeHtml(issue.count)} mentions</span>
+                                        <span class="text-xs text-slate-400">\${escapeHtml(issue.positive_count)} positive · \${escapeHtml(issue.neutral_count)} neutral · \${escapeHtml(issue.negative_count)} negative · \${escapeHtml(issue.unclassified_count)} unclassified</span>
                                         \${issue.sentiment ? \`<span class="text-xs px-2 py-0.5 rounded \${getSentimentColor(issue.sentiment)}">
                                             \${escapeHtml(issue.sentiment)}
                                         </span>\` : ''}

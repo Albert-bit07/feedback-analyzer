@@ -117,7 +117,7 @@ Apply migration `0003_corrections.sql` through the existing migration command be
 
 `POST /api/feedback/:id/corrections` accepts `sentiment`, `category`, `summary`, `reason` (1–500 characters), `input_hash` and `expected_revision` from the current triage row. A single conditional insert verifies the current input hash and latest correction revision, then appends the next revision. Concurrent or stale saves return 409; refresh and review before retrying. A lost response does not create a duplicate revision on retry: the old expected revision conflicts, so inspect history to determine whether the first save succeeded.
 
-`GET /api/feedback/:id/corrections` returns the newest 100 history entries, including their input hashes. Triage displays only the latest correction for the current input; earlier-input corrections remain in history. Later model processing cannot erase a human correction. Legacy fixtures without an input hash are not editable through this workflow. All routes use the existing shared analyst authentication, so this is not named-reviewer attribution or a tamper-proof audit log. Corrections are shown in triage and the overall sentiment statistic. Other legacy issue lists/charts and AI insights still describe original reports and do not incorporate reviewed labels. No labeled model-quality evaluation is claimed.
+`GET /api/feedback/:id/corrections` returns the newest 100 history entries, including their input hashes. Triage displays only the latest correction for the current input; earlier-input corrections remain in history. Later model processing cannot erase a human correction. Legacy fixtures without an input hash are not editable through this workflow. All routes use the existing shared analyst authentication, so this is not named-reviewer attribution or a tamper-proof audit log. Corrections are shown in triage, the overall sentiment statistic and top issues. Other legacy issue lists/charts and AI insights still describe original reports and do not incorporate reviewed labels. No labeled model-quality evaluation is claimed.
 
 ### Browsing older reports
 
@@ -229,3 +229,15 @@ counts still include every report. `avgSentiment` is a one-decimal string when
 there are samples, or `null` when there are none. The dashboard shows “No
 classifications” for the latter and exposes sample counts in the statistic's
 tooltip. This is not a calibrated satisfaction score or proof of model quality.
+
+### Top-issue classification counts
+
+`GET /api/top-issues` groups unresolved reports by exact title, using the same
+current-input correction/model/legacy precedence as overall sentiment. Each group
+returns positive, neutral, negative and unclassified counts. A single sentiment
+label is supplied only when every report has that same recognized label; mixed
+or partially unclassified groups have `sentiment: null`. The dashboard shows
+the distribution so an arbitrary report cannot represent the entire group.
+Ties sort by title; at most five groups are returned. Human revision history
+does not multiply reports, and resolved reports are excluded. This is exact-title
+grouping, not semantic duplicate detection or evaluated model quality.
