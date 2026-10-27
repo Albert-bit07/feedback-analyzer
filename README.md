@@ -117,7 +117,7 @@ Apply migration `0003_corrections.sql` through the existing migration command be
 
 `POST /api/feedback/:id/corrections` accepts `sentiment`, `category`, `summary`, `reason` (1–500 characters), `input_hash` and `expected_revision` from the current triage row. A single conditional insert verifies the current input hash and latest correction revision, then appends the next revision. Concurrent or stale saves return 409; refresh and review before retrying. A lost response does not create a duplicate revision on retry: the old expected revision conflicts, so inspect history to determine whether the first save succeeded.
 
-`GET /api/feedback/:id/corrections` returns the newest 100 history entries, including their input hashes. Triage displays only the latest correction for the current input; earlier-input corrections remain in history. Later model processing cannot erase a human correction. Legacy fixtures without an input hash are not editable through this workflow. All routes use the existing shared analyst authentication, so this is not named-reviewer attribution or a tamper-proof audit log. Corrections are shown in triage, the overall sentiment statistic and top issues. Other legacy issue lists/charts and AI insights still describe original reports and do not incorporate reviewed labels. No labeled model-quality evaluation is claimed.
+`GET /api/feedback/:id/corrections` returns the newest 100 history entries, including their input hashes. Triage displays only the latest correction for the current input; earlier-input corrections remain in history. Later model processing cannot erase a human correction. Legacy fixtures without an input hash are not editable through this workflow. All routes use the existing shared analyst authentication, so this is not named-reviewer attribution or a tamper-proof audit log. Corrections are shown in triage, overall sentiment, top issues, recent reports, report details and reporter history. AI insights receive the same current labels; their cache key includes the exact input snapshot, so changed labels cannot reuse insights generated from older labels. Original report text and stored source labels remain unchanged. No labeled model-quality evaluation is claimed.
 
 ### Browsing older reports
 
@@ -241,3 +241,14 @@ the distribution so an arbitrary report cannot represent the entire group.
 Ties sort by title; at most five groups are returned. Human revision history
 does not multiply reports, and resolved reports are excluded. This is exact-title
 grouping, not semantic duplicate detection or evaluated model quality.
+
+
+### Classification consistency
+
+Recent reports, report details, reporter history and AI insight inputs use the
+same current-input correction → current model/prompt analysis → legacy source
+precedence as overall statistics. Pending reports and stale analyses have null
+labels; only legacy reports without an input hash fall back to source labels.
+Category follows the same precedence in details and insight inputs. Recent and
+history queries break timestamp ties by descending report ID. This makes views
+consistent; it does not establish model accuracy or semantic duplicate detection.

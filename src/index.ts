@@ -25,7 +25,7 @@ interface Feedback {
 	upvotes?: number;
 }
 
-// Both queries bind MODEL and PROMPT_VERSION before any other parameters.
+// Classification queries bind MODEL and PROMPT_VERSION before other parameters.
 const currentClassificationJoins = `
   LEFT JOIN analyses a ON a.feedback_id=f.id AND a.input_hash=f.request_hash
     AND a.model_version=? AND a.prompt_version=?
@@ -34,6 +34,8 @@ const currentClassificationJoins = `
       WHERE feedback_id=f.id AND input_hash=f.request_hash)`;
 const currentSentiment = `COALESCE(c.sentiment,a.sentiment,
   CASE WHEN f.request_hash IS NULL THEN f.sentiment END)`;
+const currentCategory = `COALESCE(c.category,a.category,
+  CASE WHEN f.request_hash IS NULL THEN f.category END)`;
 
 export default {
     async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
@@ -164,17 +166,11 @@ async function getTopIssues(env: Env, corsHeaders: Record<string, string>): Prom
 // Get most recent issues
 async function getRecentIssues(env: Env, corsHeaders: Record<string, string>): Promise<Response> {
 	const result = await env.DB.prepare(`
-		SELECT 
-			id,
-			title,
-			description,
-			source,
-			created_at,
-			sentiment
-		FROM feedback
-		ORDER BY created_at DESC
-		LIMIT 5
-	`).all();
+    SELECT f.id, f.title, f.description, f.source, f.created_at,
+      ${currentSentiment} AS sentiment
+    FROM feedback f ${currentClassificationJoins}
+    ORDER BY f.created_at DESC, f.id DESC LIMIT 5
+  `).bind(MODEL, PROMPT_VERSION).all();
 
 	return new Response(JSON.stringify(result.results), {
 		headers: { 'Content-Type': 'application/json', ...corsHeaders },
@@ -230,20 +226,12 @@ async function getLongestUnresolved(env: Env, corsHeaders: Record<string, string
 // Get individual feedback detail
 async function getFeedbackDetail(env: Env, id: number, corsHeaders: Record<string, string>): Promise<Response> {
 	const result = await env.DB.prepare(`
-		SELECT 
-			id,
-			title,
-			description,
-			source,
-			user_email,
-			sentiment,
-			category,
-			priority,
-			created_at,
-			resolved_at
-		FROM feedback
-		WHERE id = ?
-	`).bind(id).first();
+    SELECT f.id, f.title, f.description, f.source, f.user_email,
+      ${currentSentiment} AS sentiment, ${currentCategory} AS category,
+      f.priority, f.created_at, f.resolved_at
+    FROM feedback f ${currentClassificationJoins}
+    WHERE f.id = ?
+  `).bind(MODEL, PROMPT_VERSION, id).first();
 
 	if (!result) {
 		return new Response(JSON.stringify({ error: 'Feedback not found' }), {
@@ -255,12 +243,11 @@ async function getFeedbackDetail(env: Env, id: number, corsHeaders: Record<strin
 	// Get all feedback from this user for context
 	const userHistory = result.user_email
 		? await env.DB.prepare(`
-			SELECT id, title, created_at, sentiment, resolved_at
-			FROM feedback
-			WHERE user_email = ?
-			ORDER BY created_at DESC
-			LIMIT 10
-		`).bind(result.user_email).all()
+      SELECT f.id, f.title, f.created_at, ${currentSentiment} AS sentiment, f.resolved_at
+      FROM feedback f ${currentClassificationJoins}
+      WHERE f.user_email = ?
+      ORDER BY f.created_at DESC, f.id DESC LIMIT 10
+    `).bind(MODEL, PROMPT_VERSION, result.user_email).all()
 		: { results: [] };
 
 	const detail = {
@@ -278,12 +265,12 @@ async function getAIInsights(env: Env, corsHeaders: Record<string, string>): Pro
 
 	// Get sample of recent feedback for AI analysis
 	const recentFeedback = await env.DB.prepare(`
-		SELECT id, title, description, category, sentiment, created_at, resolved_at
-		FROM feedback
-		WHERE created_at > datetime('now', '-7 days')
-		ORDER BY created_at DESC, id DESC
-		LIMIT 20
-	`).all();
+    SELECT f.id, f.title, f.description, ${currentCategory} AS category,
+      ${currentSentiment} AS sentiment, f.created_at, f.resolved_at
+    FROM feedback f ${currentClassificationJoins}
+    WHERE f.created_at > datetime('now', '-7 days')
+    ORDER BY f.created_at DESC, f.id DESC LIMIT 20
+  `).bind(MODEL, PROMPT_VERSION).all();
 
     const feedbackText = JSON.stringify(recentFeedback.results);
     // Key the exact prompt input, so late inference cannot repopulate a newer
