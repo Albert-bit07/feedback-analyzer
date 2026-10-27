@@ -51,7 +51,7 @@ test('dashboard uses escaped text and event listeners for hostile titles', async
   assert.equal(context.clicked[1], title);
 });
 
-test('late insight generation cannot replace the cache for newer feedback state', async () => {
+test('late insight generation cannot replace the cache for newer feedback state', {timeout:5000}, async () => {
   let rows = [{id: 1, title: 'Login error', description: 'Cannot sign in', resolved_at: null}];
   const cache = new Map();
   let finishFirst, signalStarted;
@@ -60,7 +60,7 @@ test('late insight generation cannot replace the cache for newer feedback state'
   let calls = 0;
   const bindings = {
     ...credentials,
-    DB: { prepare() { return {all: async () => ({results: structuredClone(rows)})}; } },
+    DB: { prepare() { return {bind() { return this; }, all: async () => ({results: structuredClone(rows)})}; } },
     CACHE: {get: async key => cache.get(key), put: async (key, value) => { cache.set(key, value); }},
     AI: {run: async () => {
       calls++;
