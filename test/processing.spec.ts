@@ -248,3 +248,36 @@ it('reports inference latency only for current inputs and model/prompt versions'
   await env.DB.prepare("UPDATE feedback SET request_hash='changed' WHERE id=999").run();
   expect(await processingHealth(env.DB)).toMatchObject({inference_samples:1,average_inference_ms:100,max_inference_ms:100});
 });
+
+it('keeps unclassified feedback out of sentiment and uses current analyst decisions', async () => {
+  const stats = async () => {
+    const response = await SELF.fetch('https://example.com/api/stats',{headers:auth});
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
+    return response.json();
+  };
+  expect(await stats()).toMatchObject({total:1,avgSentiment:null,sentimentSamples:0,unclassified:1});
+  await processOne(env,async()=>analysis,()=>1000);
+  expect(await stats()).toMatchObject({avgSentiment:'2.0',sentimentSamples:1,unclassified:0});
+  const firstCorrection = await SELF.fetch('https://example.com/api/feedback/'+id+'/corrections',{
+    method:'POST',headers:{...auth,'Content-Type':'application/json'},body:JSON.stringify(await correctionBody())});
+  expect(firstCorrection.status).toBe(201);
+  expect(await stats()).toMatchObject({avgSentiment:'8.0',sentimentSamples:1});
+  const secondCorrection = await SELF.fetch('https://example.com/api/feedback/'+id+'/corrections',{
+    method:'POST',headers:{...auth,'Content-Type':'application/json'},body:JSON.stringify({...await correctionBody(1),sentiment:'neutral'})});
+  expect(secondCorrection.status).toBe(201);
+  expect(await stats()).toMatchObject({total:1,avgSentiment:'5.0',sentimentSamples:1});
+  // Changing the input invalidates both old model output and old human review.
+  await env.DB.prepare("UPDATE feedback SET request_hash='changed' WHERE id=?").bind(id).run();
+  expect(await stats()).toMatchObject({avgSentiment:null,sentimentSamples:0,unclassified:1});
+  await env.DB.prepare("INSERT INTO analyses(feedback_id,input_hash,model_version,prompt_version,sentiment,category,summary,inference_ms) VALUES (?,'changed',?,'old-prompt','positive','test','old',1)").bind(id,MODEL).run();
+  expect(await stats()).toMatchObject({avgSentiment:null,sentimentSamples:0});
+  // Legacy labels remain usable; unknown strings and pending inputs do not count.
+  await env.DB.prepare("INSERT INTO feedback(title,source,sentiment) VALUES ('Legacy','test','positive'),('Unknown','test','mystery'),('Empty','test',NULL)").run();
+  expect(await stats()).toMatchObject({total:4,avgSentiment:'8.0',sentimentSamples:1,unclassified:3});
+  await env.DB.prepare('DELETE FROM analysis_corrections').run();
+  await env.DB.prepare('DELETE FROM analyses').run();
+  await env.DB.prepare('DELETE FROM processing_jobs').run();
+  await env.DB.prepare('DELETE FROM feedback').run();
+  expect(await stats()).toMatchObject({total:0,avgSentiment:null,sentimentSamples:0,unclassified:0});
+});

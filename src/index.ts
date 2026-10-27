@@ -1,4 +1,4 @@
-import { processPending } from './processing.ts';
+import { MODEL, PROMPT_VERSION, processPending } from './processing.ts';
 import { authorize } from './access.ts';
 import { workflow } from './workflow.ts';
 import { triageHTML } from './triage.ts';
@@ -99,39 +99,32 @@ export default {
 // Get overall stats
 async function getStats(env: Env, corsHeaders: Record<string, string>): Promise<Response> {
 
-	const totalResult = await env.DB.prepare('SELECT COUNT(*) as count FROM feedback').first();
-	const unresolvedResult = await env.DB.prepare('SELECT COUNT(*) as count FROM feedback WHERE resolved_at IS NULL').first();
-	const avgSentiment = await env.DB.prepare(`
-		SELECT 
-			CASE 
-				WHEN sentiment = 'positive' THEN 8.0
-				WHEN sentiment = 'neutral' THEN 5.0
-				ELSE 2.0
-			END as score
-		FROM feedback
-	`).all();
-
-	const avgScore = avgSentiment.results.length > 0
-		? (avgSentiment.results.reduce((sum: number, row: any) => sum + row.score, 0) / avgSentiment.results.length).toFixed(1)
-		: '0.0';
-
-	const repeatUsersResult = await env.DB.prepare(`
-		SELECT COUNT(DISTINCT user_email) as count 
-		FROM feedback 
-		WHERE user_email IN (
-			SELECT user_email 
-			FROM feedback 
-			GROUP BY user_email 
-			HAVING COUNT(*) > 1
-		)
-	`).first();
-
-	const stats = {
-		total: totalResult?.count || 0,
-		avgSentiment: avgScore,
-		unresolved: unresolvedResult?.count || 0,
-		repeatUsers: repeatUsersResult?.count || 0,
-	};
+    // Keep source data, generated interpretation and human review separate.
+    // Only the latest review of the current input overrides its current analysis.
+    const aggregate = await env.DB.prepare(`WITH effective AS (
+      SELECT f.resolved_at, COALESCE(c.sentiment,a.sentiment,
+        CASE WHEN f.request_hash IS NULL THEN f.sentiment END) AS sentiment
+      FROM feedback f
+      LEFT JOIN analyses a ON a.feedback_id=f.id AND a.input_hash=f.request_hash
+        AND a.model_version=? AND a.prompt_version=?
+      LEFT JOIN analysis_corrections c ON c.feedback_id=f.id AND c.input_hash=f.request_hash
+        AND c.revision=(SELECT MAX(revision) FROM analysis_corrections
+          WHERE feedback_id=f.id AND input_hash=f.request_hash)
+    ), scored AS (
+      SELECT resolved_at, CASE sentiment WHEN 'positive' THEN 8.0
+        WHEN 'neutral' THEN 5.0 WHEN 'negative' THEN 2.0 END AS score FROM effective
+    ) SELECT COUNT(*) AS total, COUNT(score) AS sentimentSamples,
+      COUNT(*)-COUNT(score) AS unclassified, AVG(score) AS average,
+      COUNT(CASE WHEN resolved_at IS NULL THEN 1 END) AS unresolved,
+      (SELECT COUNT(*) FROM (SELECT user_email FROM feedback WHERE user_email IS NOT NULL
+        GROUP BY user_email HAVING COUNT(*)>1)) AS repeatUsers
+      FROM scored`).bind(MODEL,PROMPT_VERSION).first<{
+        total:number; sentimentSamples:number; unclassified:number; average:number|null;
+        unresolved:number; repeatUsers:number;
+      }>();
+    if (!aggregate) throw new Error('Stats query returned no aggregate');
+    const { average, ...counts } = aggregate;
+    const stats = { ...counts, avgSentiment:average === null ? null : average.toFixed(1) };
 
 	const response = JSON.stringify(stats);
 
@@ -601,7 +594,8 @@ function getDashboardHTML(): string {
                 const res = await fetch(API_BASE + '/api/stats');
                 const stats = await res.json();
                 document.getElementById('stat-total').textContent = stats.total;
-                document.getElementById('stat-sentiment').textContent = stats.avgSentiment + '/10';
+                document.getElementById('stat-sentiment').textContent = stats.avgSentiment === null ? 'No classifications' : stats.avgSentiment + '/10';
+                document.getElementById('stat-sentiment').title = stats.sentimentSamples + ' classified reports; ' + stats.unclassified + ' unclassified. Heuristic: positive 8, neutral 5, negative 2.';
                 document.getElementById('stat-unresolved').textContent = stats.unresolved;
                 document.getElementById('stat-repeat').textContent = stats.repeatUsers;
             } catch (error) {

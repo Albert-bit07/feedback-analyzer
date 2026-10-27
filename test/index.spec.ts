@@ -1,3 +1,6 @@
+import firstMigration from '../migrations/0001_ingestion.sql?raw';
+import secondMigration from '../migrations/0002_processing.sql?raw';
+import correctionMigration from '../migrations/0003_corrections.sql?raw';
 import { env, createExecutionContext, waitOnExecutionContext, SELF } from 'cloudflare:test';
 import { beforeEach, describe, it, expect } from 'vitest';
 import worker from '../src/index';
@@ -30,21 +33,20 @@ describe('Dashboard worker', () => {
 
 describe('read APIs with isolated local bindings', () => {
   beforeEach(async () => {
-    await env.DB.exec('DROP TABLE IF EXISTS feedback');
+    await env.DB.exec('DROP TABLE IF EXISTS analysis_corrections; DROP TABLE IF EXISTS analyses; DROP TABLE IF EXISTS resolution_history; DROP TABLE IF EXISTS processing_jobs; DROP TABLE IF EXISTS feedback;');
+    await env.DB.batch((firstMigration+secondMigration+correctionMigration).split(';').map(s=>s.trim()).filter(Boolean).map(s=>env.DB.prepare(s)));
     await env.CACHE.delete('stats');
   });
   it('returns consistent uncached stats', async () => {
-    await env.DB.exec('CREATE TABLE feedback (id INTEGER PRIMARY KEY, title TEXT, description TEXT, source TEXT, user_email TEXT, sentiment TEXT, category TEXT, priority TEXT, created_at TEXT, resolved_at TEXT)');
-    await env.DB.prepare("INSERT INTO feedback (title, sentiment, user_email) VALUES (?, ?, ?)").bind('Example', 'positive', 'synthetic@example.test').run();
+    await env.DB.prepare("INSERT INTO feedback (title, sentiment, user_email, source) VALUES (?, ?, ?, 'test')").bind('Example', 'positive', 'synthetic@example.test').run();
     const first = await SELF.fetch('https://example.com/api/stats', { headers: auth });
     expect(first.status).toBe(200);
-    expect(await first.json()).toEqual({ total: 1, avgSentiment: '8.0', unresolved: 1, repeatUsers: 0 });
+    expect(await first.json()).toEqual({ total: 1, avgSentiment: '8.0', unresolved: 1, repeatUsers: 0, sentimentSamples:1, unclassified:0 });
     const cached = await SELF.fetch('https://example.com/api/stats', { headers: auth });
-    expect(await cached.json()).toEqual({ total: 1, avgSentiment: '8.0', unresolved: 1, repeatUsers: 0 });
+    expect(await cached.json()).toEqual({ total: 1, avgSentiment: '8.0', unresolved: 1, repeatUsers: 0, sentimentSamples:1, unclassified:0 });
   });
 
   it('returns 404 for absent feedback', async () => {
-    await env.DB.exec('CREATE TABLE feedback (id INTEGER PRIMARY KEY, title TEXT, description TEXT, source TEXT, user_email TEXT, sentiment TEXT, category TEXT, priority TEXT, created_at TEXT, resolved_at TEXT)');
     const response = await SELF.fetch('https://example.com/api/feedback/1', { headers: auth });
     expect(response.status).toBe(404);
     expect(await response.json()).toEqual({ error: 'Feedback not found' });
@@ -54,7 +56,7 @@ describe('read APIs with isolated local bindings', () => {
 
 it('insight inputs include committed resolution state from D1', async () => {
   await env.DB.exec('CREATE TABLE IF NOT EXISTS feedback (id INTEGER PRIMARY KEY, title TEXT, description TEXT, category TEXT, sentiment TEXT, created_at TEXT, resolved_at TEXT)');
-  await env.DB.prepare("INSERT INTO feedback (id,title,created_at) VALUES (123,?,datetime('now'))").bind('Insight resolution fixture').run();
+  await env.DB.prepare("INSERT INTO feedback (id,title,source,created_at) VALUES (123,?,'test',datetime('now'))").bind('Insight resolution fixture').run();
   const inputs: string[] = [];
   const bindings = {...env, AI: {run: async (_model: string, options: {messages: {content: string}[]}) => {
     inputs.push(options.messages[1].content);
