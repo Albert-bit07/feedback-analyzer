@@ -592,6 +592,7 @@ function getDashboardHTML(): string {
         async function loadStats() {
             try {
                 const res = await fetch(API_BASE + '/api/stats');
+                if (!res.ok) throw new Error('Stats request failed (' + res.status + ')');
                 const stats = await res.json();
                 document.getElementById('stat-total').textContent = stats.total;
                 document.getElementById('stat-sentiment').textContent = stats.avgSentiment === null ? 'No classifications' : stats.avgSentiment + '/10';
@@ -599,6 +600,10 @@ function getDashboardHTML(): string {
                 document.getElementById('stat-unresolved').textContent = stats.unresolved;
                 document.getElementById('stat-repeat').textContent = stats.repeatUsers;
             } catch (error) {
+                for (const id of ['stat-total','stat-sentiment','stat-unresolved','stat-repeat']) {
+                    document.getElementById(id).textContent = 'Unavailable';
+                }
+                document.getElementById('stat-sentiment').title = 'Refresh failed. Retry when the service is available.';
                 console.error('Error loading stats:', error);
             }
         }
