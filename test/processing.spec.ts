@@ -1,3 +1,4 @@
+import worker from '../src/index';
 import correctionMigration from '../migrations/0003_corrections.sql?raw';
 import { env, SELF } from 'cloudflare:test';
 import { beforeEach, expect, it } from 'vitest';
@@ -313,4 +314,62 @@ it('orders equal-sized issue groups deterministically and limits the result', as
   const response = await SELF.fetch('https://example.com/api/top-issues',{headers:auth});
   const rows = await response.json<Array<{title:string}>>();
   expect(rows.map(row=>row.title)).toEqual(['A','B','C','Slow','X']);
+});
+
+
+it('uses current classifications in recent reports, details and reporter history', async () => {
+  await env.DB.prepare("UPDATE feedback SET user_email='views@example.test' WHERE id=?").bind(id).run();
+  const check = async (sentiment: string | null, category: string | null) => {
+    const recent = await (await SELF.fetch('https://example.com/api/recent',{headers:auth})).json<Array<Record<string,unknown>>>();
+    expect(recent.find(row=>row.id===id)).toMatchObject({sentiment});
+    const detail = await (await SELF.fetch(`https://example.com/api/feedback/${id}`,{headers:auth})).json<{sentiment:unknown;category:unknown;userHistory:Array<Record<string,unknown>>}>();
+    expect(detail).toMatchObject({sentiment,category});
+    expect(detail.userHistory.find(row=>row.id===id)).toMatchObject({sentiment});
+  };
+  await check(null,null);
+  await processOne(env,async()=>analysis);
+  await check('negative','performance');
+  expect((await saveCorrection(await correctionBody())).status).toBe(201);
+  await check('positive','usability');
+  expect((await saveCorrection({...await correctionBody(1),sentiment:'neutral',category:'other'})).status).toBe(201);
+  await check('neutral','other');
+  await env.DB.prepare("UPDATE feedback SET request_hash='changed' WHERE id=?").bind(id).run();
+  await check(null,null);
+  await env.DB.prepare("UPDATE feedback SET request_hash=NULL,sentiment='positive',category='legacy' WHERE id=?").bind(id).run();
+  await check('positive','legacy');
+});
+
+it('invalidates insight snapshots when current model labels or corrections change', async () => {
+  const inputs: Array<Array<Record<string,unknown>>> = [];
+  const cache = new Map<string,string>();
+  const bindings = {...env,
+    CACHE: {get:async(key:string)=>cache.get(key) ?? null,put:async(key:string,value:string)=>{cache.set(key,value);}} as unknown as KVNamespace,
+    AI: {run:async(_model:string,options:{messages:{content:string}[]})=>{
+      inputs.push(JSON.parse(options.messages[1].content.split('\n\n')[1]));
+      return {response:'Controlled result '+inputs.length};
+    }} as unknown as Ai};
+  const insights = async () => {
+    const response = await worker.fetch(new Request('https://example.com/api/ai-insights',{headers:auth}),bindings);
+    expect(response.status).toBe(200);
+    return response.json();
+  };
+  const pending = await insights();
+  expect(await insights()).toEqual(pending);
+  expect(inputs).toHaveLength(1);
+  await processOne(env,async()=>analysis);
+  await insights();
+  expect(inputs).toHaveLength(2);
+  expect(inputs[1][0]).toMatchObject({id,sentiment:'negative',category:'performance'});
+  expect((await saveCorrection(await correctionBody())).status).toBe(201);
+  const reviewed = await insights();
+  expect(inputs).toHaveLength(3);
+  expect(inputs[2][0]).toMatchObject({id,sentiment:'positive',category:'usability'});
+  expect(await insights()).toEqual(reviewed);
+  expect(inputs).toHaveLength(3);
+  await env.DB.prepare("UPDATE feedback SET request_hash='changed' WHERE id=?").bind(id).run();
+  // Stale labels disappear, returning to the exact cached pending snapshot.
+  expect(await insights()).toEqual(pending);
+  expect(inputs).toHaveLength(3);
+  expect(inputs[0][0]).toMatchObject({id,sentiment:null,category:null});
+  expect(await env.DB.prepare('SELECT sentiment FROM feedback WHERE id=?').bind(id).first('sentiment')).toBe(null);
 });
