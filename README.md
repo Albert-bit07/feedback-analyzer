@@ -87,7 +87,7 @@ The Cloudflare test toolchain currently pins affected transitive versions. Scope
 - Evaluate model output on labeled reports and add human corrections/semantic issue suggestions. Current model output is validated structurally, not proven accurate.
 - Add individual identities, rate limits and audit attribution before broader organizational use. Shared credentials cannot identify which analyst resolved a report.
 - Add pagination, semantic issue grouping and human corrections. Exact title grouping currently remains a dashboard summary, not an issue entity.
-- Evaluate analysis quality on labeled data before claiming useful classifications. Existing sentiment values are fixtures, and the 8/5/2 display mapping is not calibrated satisfaction.
+- Evaluate analysis quality on labeled data before claiming useful classifications. Legacy sentiment values are fixtures, and the 8/5/2 display mapping is not calibrated satisfaction.
 
 [Demo](docs/demo.md) · [Design decisions](docs/project-overview.md)
 
@@ -117,7 +117,7 @@ Apply migration `0003_corrections.sql` through the existing migration command be
 
 `POST /api/feedback/:id/corrections` accepts `sentiment`, `category`, `summary`, `reason` (1–500 characters), `input_hash` and `expected_revision` from the current triage row. A single conditional insert verifies the current input hash and latest correction revision, then appends the next revision. Concurrent or stale saves return 409; refresh and review before retrying. A lost response does not create a duplicate revision on retry: the old expected revision conflicts, so inspect history to determine whether the first save succeeded.
 
-`GET /api/feedback/:id/corrections` returns the newest 100 history entries, including their input hashes. Triage displays only the latest correction for the current input; earlier-input corrections remain in history. Later model processing cannot erase a human correction. Legacy fixtures without an input hash are not editable through this workflow. All routes use the existing shared analyst authentication, so this is not named-reviewer attribution or a tamper-proof audit log. Corrections are shown in triage; legacy aggregate charts and AI insights still describe original reports and do not incorporate reviewed labels. No labeled model-quality evaluation is claimed.
+`GET /api/feedback/:id/corrections` returns the newest 100 history entries, including their input hashes. Triage displays only the latest correction for the current input; earlier-input corrections remain in history. Later model processing cannot erase a human correction. Legacy fixtures without an input hash are not editable through this workflow. All routes use the existing shared analyst authentication, so this is not named-reviewer attribution or a tamper-proof audit log. Corrections are shown in triage and the overall sentiment statistic. Other legacy issue lists/charts and AI insights still describe original reports and do not incorporate reviewed labels. No labeled model-quality evaluation is claimed.
 
 ### Browsing older reports
 
@@ -213,3 +213,19 @@ harness measures sentiment/category agreement and schema validity; it does not
 measure summary quality, duplicate detection, real user utility or production
 latency. Bundled tests use handwritten synthetic cases only. **No live model
 quality result has been established by those tests.**
+
+### Overall sentiment statistic
+
+`GET /api/stats` reads counts and sentiment in one database snapshot. For each
+report it selects the latest human correction matching the current input hash,
+then the analysis matching the current input and configured model/prompt version.
+Only legacy rows without an input hash fall back to their original sentiment.
+Old-input corrections and obsolete model outputs do not contribute.
+
+The heuristic maps positive/neutral/negative to 8/5/2. Unknown or pending labels
+are excluded instead of being scored as negative. `sentimentSamples` gives the
+denominator and `unclassified` counts the remaining reports; total and unresolved
+counts still include every report. `avgSentiment` is a one-decimal string when
+there are samples, or `null` when there are none. The dashboard shows “No
+classifications” for the latter and exposes sample counts in the statistic's
+tooltip. This is not a calibrated satisfaction score or proof of model quality.

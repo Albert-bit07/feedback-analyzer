@@ -166,3 +166,24 @@ test('triage pagination preserves the visible page on failure and refreshes its 
   assert.equal(paths.at(-1),'/api/triage');
   assert.equal(elements.get('items').children.length,100);
 });
+
+test('overall sentiment displays missing classifications and its sample denominator', async () => {
+  const html = await (await worker.fetch(request('/'), credentials)).text();
+  const start = html.indexOf('async function loadStats()');
+  const end = html.indexOf('// Load top issues', start);
+  const elements = new Map();
+  const document = {getElementById(id) {
+    if (!elements.has(id)) elements.set(id, {});
+    return elements.get(id);
+  }};
+  let stats = {total:3,unresolved:3,repeatUsers:0,avgSentiment:null,sentimentSamples:0,unclassified:3};
+  const context = vm.createContext({document,API_BASE:'',console,fetch:async()=>({json:async()=>stats})});
+  vm.runInContext(html.slice(start,end),context);
+  await vm.runInContext('loadStats()',context);
+  assert.equal(elements.get('stat-sentiment').textContent,'No classifications');
+  assert.match(elements.get('stat-sentiment').title,/0 classified reports; 3 unclassified/);
+  stats = {...stats,avgSentiment:'5.0',sentimentSamples:2,unclassified:1};
+  await vm.runInContext('loadStats()',context);
+  assert.equal(elements.get('stat-sentiment').textContent,'5.0/10');
+  assert.match(elements.get('stat-sentiment').title,/2 classified reports; 1 unclassified/);
+});
