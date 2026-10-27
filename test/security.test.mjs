@@ -177,7 +177,7 @@ test('overall sentiment displays missing classifications and its sample denomina
     return elements.get(id);
   }};
   let stats = {total:3,unresolved:3,repeatUsers:0,avgSentiment:null,sentimentSamples:0,unclassified:3};
-  const context = vm.createContext({document,API_BASE:'',console,fetch:async()=>({json:async()=>stats})});
+  const context = vm.createContext({document,API_BASE:'',console,fetch:async()=>({ok:true,json:async()=>stats})});
   vm.runInContext(html.slice(start,end),context);
   await vm.runInContext('loadStats()',context);
   assert.equal(elements.get('stat-sentiment').textContent,'No classifications');
@@ -186,4 +186,37 @@ test('overall sentiment displays missing classifications and its sample denomina
   await vm.runInContext('loadStats()',context);
   assert.equal(elements.get('stat-sentiment').textContent,'5.0/10');
   assert.match(elements.get('stat-sentiment').title,/2 classified reports; 1 unclassified/);
+});
+
+test('stats refresh clears stale values on HTTP, network and JSON failures', async () => {
+  const html = await (await worker.fetch(request('/'), credentials)).text();
+  const start = html.indexOf('async function loadStats()');
+  const end = html.indexOf('// Load top issues', start);
+  for (const failure of ['http','network','json']) {
+    const elements = new Map();
+    const document = {getElementById(id) {
+      if (!elements.has(id)) elements.set(id, {});
+      return elements.get(id);
+    }};
+    let failing = false;
+    const context = vm.createContext({document,API_BASE:'',console:{error(){}},fetch:async()=>{
+      if (failing && failure==='network') throw new Error('offline');
+      return {ok:!(failing && failure==='http'),status:503,json:async()=>{
+        if (failing && failure==='json') throw new SyntaxError('invalid JSON');
+        return {total:9,unresolved:2,repeatUsers:1,avgSentiment:'8.0',sentimentSamples:9,unclassified:0};
+      }};
+    }});
+    vm.runInContext(html.slice(start,end),context);
+    await vm.runInContext('loadStats()',context);
+    assert.equal(elements.get('stat-total').textContent,9);
+    failing = true;
+    await vm.runInContext('loadStats()',context);
+    for (const id of ['stat-total','stat-sentiment','stat-unresolved','stat-repeat']) {
+      assert.equal(elements.get(id).textContent,'Unavailable',failure+': '+id);
+    }
+    assert.equal(elements.get('stat-sentiment').title,'Refresh failed. Retry when the service is available.');
+    failing = false;
+    await vm.runInContext('loadStats()',context);
+    assert.equal(elements.get('stat-total').textContent,9);
+  }
 });
