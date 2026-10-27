@@ -37,7 +37,7 @@ test('dashboard uses escaped text and event listeners for hostile titles', async
     return elements.get(id);
   } };
   const title = `O'Reilly <img src=x onerror=alert(1)>`;
-  const context = vm.createContext({ document, console, setInterval() {}, fetch: async () => ({ json: async () => [{ title, sentiment: '<svg/onload=alert(1)>', count: 2 }] }) });
+  const context = vm.createContext({ document, console, setInterval() {}, fetch: async () => ({ json: async () => [{ title, sentiment: '<svg/onload=alert(1)>', count: 2, positive_count:1, neutral_count:0, negative_count:1, unclassified_count:0 }] }) });
   // Skip startup calls; invoke the actual renderer with a deterministic fixture.
   vm.runInContext(script.slice(0, script.indexOf('// Load all data')), context);
   await vm.runInContext('loadTopIssues()', context);
@@ -45,6 +45,7 @@ test('dashboard uses escaped text and event listeners for hostile titles', async
   assert.ok(container.innerHTML.includes('&lt;img'));
   assert.ok(!container.innerHTML.includes('onclick='));
   assert.ok(!container.innerHTML.includes('<svg/onload'));
+  assert.ok(container.innerHTML.includes('1 positive · 0 neutral · 1 negative · 0 unclassified'));
   vm.runInContext('showFeedbackDetail = (...args) => { globalThis.clicked = args; }', context);
   container.children[0].callback();
   assert.equal(context.clicked[1], title);

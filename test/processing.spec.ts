@@ -281,3 +281,36 @@ it('keeps unclassified feedback out of sentiment and uses current analyst decisi
   await env.DB.prepare('DELETE FROM feedback').run();
   expect(await stats()).toMatchObject({total:0,avgSentiment:null,sentimentSamples:0,unclassified:0});
 });
+
+it('groups current classifications without assigning an arbitrary sentiment to mixed issues', async () => {
+  const top = async () => {
+    const response = await SELF.fetch('https://example.com/api/top-issues',{headers:auth});
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
+    return response.json<Array<Record<string,unknown>>>();
+  };
+  expect((await top())[0]).toMatchObject({title:'Slow',count:1,sentiment:null,unclassified_count:1});
+  await processOne(env,async()=>analysis,()=>1000);
+  expect((await top())[0]).toMatchObject({sentiment:'negative',negative_count:1,unclassified_count:0});
+  await env.DB.prepare("INSERT INTO feedback(title,source,sentiment) VALUES ('Slow','test','positive'),('Slow','test','negative')").run();
+  expect((await top())[0]).toMatchObject({count:3,sentiment:null,positive_count:1,negative_count:2});
+  for (const [revision,sentiment] of [[0,'positive'],[1,'neutral']] as const) {
+    const response = await SELF.fetch('https://example.com/api/feedback/'+id+'/corrections',{
+      method:'POST',headers:{...auth,'Content-Type':'application/json'},body:JSON.stringify({...await correctionBody(revision),sentiment})});
+    expect(response.status).toBe(201);
+  }
+  expect((await top())[0]).toMatchObject({count:3,sentiment:null,positive_count:1,neutral_count:1,negative_count:1,unclassified_count:0});
+  await env.DB.prepare("UPDATE feedback SET request_hash='changed' WHERE id=?").bind(id).run();
+  expect((await top())[0]).toMatchObject({count:3,neutral_count:0,unclassified_count:1});
+  await env.DB.prepare("UPDATE feedback SET resolved_at=CURRENT_TIMESTAMP WHERE id=?").bind(id).run();
+  expect((await top())[0]).toMatchObject({count:2,positive_count:1,negative_count:1,unclassified_count:0});
+});
+
+it('orders equal-sized issue groups deterministically and limits the result', async () => {
+  for (const title of ['Z','Y','X','C','B','A']) {
+    await env.DB.prepare("INSERT INTO feedback(title,source,sentiment) VALUES (?,'test','neutral')").bind(title).run();
+  }
+  const response = await SELF.fetch('https://example.com/api/top-issues',{headers:auth});
+  const rows = await response.json<Array<{title:string}>>();
+  expect(rows.map(row=>row.title)).toEqual(['A','B','C','Slow','X']);
+});
