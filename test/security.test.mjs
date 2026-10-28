@@ -91,12 +91,14 @@ test('triage health renderer replaces stale counters when a refresh fails', asyn
   let inferenceSamples = 2;
   const context = vm.createContext({document, fetch: async () => ({ok: available, status: 503,
     json: async () => ({ready_pending:2, delayed_pending:1, processing:3, expired_leases:1,
-      failed:4, completed:5, retried_jobs:6, oldest_active_age_seconds:90, inference_samples:inferenceSamples, average_inference_ms:125.5, max_inference_ms:200})})});
+      last_failures:{inference_timeout:2,unknown:1,input_failed:0}, failed:4, completed:5, retried_jobs:6, oldest_active_age_seconds:90, inference_samples:inferenceSamples, average_inference_ms:125.5, max_inference_ms:200})})});
   const script = triageHTML.match(/<script>([\s\S]*?)<\/script>/)[1];
   vm.runInContext(script.slice(0, script.indexOf('let pending = null;')), context);
   await vm.runInContext('refreshHealth()', context);
   const rendered = elements.get('processing-health');
   assert.match(rendered.textContent, /Ready: 2/);
+  assert.match(rendered.textContent, /Latest unresolved failures: inference_timeout: 2, unknown: 1/);
+  assert.doesNotMatch(rendered.textContent, /input_failed/);
   assert.match(rendered.textContent, /Inference: 2 samples, average 125.5 ms, max 200 ms/);
   assert.match(rendered.textContent, /expired leases: 1/);
   assert.match(rendered.textContent, /Oldest active job: 90 seconds/);
