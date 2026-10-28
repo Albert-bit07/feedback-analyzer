@@ -72,7 +72,9 @@ async function refreshHealth() {
       ' · Failed: ' + health.failed + ' · Completed: ' + health.completed +
       ' · Retried jobs: ' + health.retried_jobs + ' · Oldest active job: ' + age +
       (health.inference_samples > 0 ? ' · Inference: ' + health.inference_samples + ' samples, average ' +
-        health.average_inference_ms + ' ms, max ' + health.max_inference_ms + ' ms' : ' · Inference: no samples');
+        health.average_inference_ms + ' ms, max ' + health.max_inference_ms + ' ms' : ' · Inference: no samples') +
+      ' · Latest unresolved failures: ' + (Object.entries(health.last_failures || {}).filter(([,count]) => count > 0)
+        .map(([code,count]) => code + ': ' + count).join(', ') || 'none');
   } catch (error) { element.textContent = 'Processing health unavailable. Refresh to retry.'; }
 }
 let before = null;

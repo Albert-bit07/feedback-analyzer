@@ -115,6 +115,20 @@ it('rejects non-string sentiment values rather than coercing model output', () =
 });
 
 
+it('counts only unresolved latest failures and redacts unrecognized error text', async () => {
+  await env.DB.prepare("UPDATE processing_jobs SET status='pending',last_error='inference_timeout' WHERE feedback_id=?").bind(id).run();
+  for (const [offset,status,error] of [[1,'failed','invalid_analysis'],[2,'processing','persistence_failed'],[3,'completed','inference_timeout'],[4,'failed','secret provider payload']] as const) {
+    await env.DB.prepare("INSERT INTO feedback(id,title,source) VALUES (?,'Fixture','test')").bind(200+offset).run();
+    await env.DB.prepare('INSERT INTO processing_jobs(feedback_id,status,last_error) VALUES (?,?,?)').bind(200+offset,status,error).run();
+  }
+  const response = await SELF.fetch('https://example.com/api/processing/health',{headers:auth});
+  const body = await response.text();
+  expect(body).not.toContain('secret provider payload');
+  expect(JSON.parse(body).last_failures).toEqual({input_failed:0,inference_failed:0,inference_timeout:1,invalid_analysis:1,persistence_failed:1,attempt_limit:0,unknown:1});
+  await env.DB.prepare("UPDATE processing_jobs SET last_error=NULL WHERE feedback_id=?").bind(id).run();
+  expect((await processingHealth(env.DB)).last_failures.inference_timeout).toBe(0);
+});
+
 it('reports ready work, backoff, expired leases and backlog age from one snapshot', async () => {
   const now = Date.parse('2026-10-25T12:00:00Z');
   await env.DB.prepare("UPDATE processing_jobs SET created_at='2026-10-25 11:55:00' WHERE feedback_id=?").bind(id).run();
@@ -130,7 +144,7 @@ it('reports ready work, backoff, expired leases and backlog age from one snapsho
     await env.DB.prepare("INSERT INTO processing_jobs(feedback_id,status,attempts,next_attempt_ms,lease_until,created_at) VALUES (?,?,?,?,?,'2026-10-25 11:59:00')").bind(100+i,...states[i]).run();
   }
   expect(await processingHealth(env.DB,now)).toEqual({pending:2,processing:2,completed:1,failed:1,
-    ready_pending:1,delayed_pending:1,expired_leases:1,retried_jobs:3,oldest_active_age_seconds:300,inference_samples:0,average_inference_ms:null,max_inference_ms:null});
+    last_failures:{input_failed:0,inference_failed:0,inference_timeout:0,invalid_analysis:0,persistence_failed:0,attempt_limit:0,unknown:0},ready_pending:1,delayed_pending:1,expired_leases:1,retried_jobs:3,oldest_active_age_seconds:300,inference_samples:0,average_inference_ms:null,max_inference_ms:null});
   const response = await SELF.fetch('https://example.com/api/processing/health',{headers:auth});
   expect(response.status).toBe(200);
   expect(response.headers.get('Cache-Control')).toBe('no-store');
@@ -142,7 +156,7 @@ it('distinguishes an empty backlog from zero age and clamps future timestamps', 
   expect((await processingHealth(env.DB,Date.parse('2026-10-25T12:00:00Z'))).oldest_active_age_seconds).toBe(0);
   await env.DB.prepare('DELETE FROM processing_jobs').run();
   expect(await processingHealth(env.DB)).toEqual({pending:0,processing:0,completed:0,failed:0,
-    ready_pending:0,delayed_pending:0,expired_leases:0,retried_jobs:0,oldest_active_age_seconds:null,inference_samples:0,average_inference_ms:null,max_inference_ms:null});
+    last_failures:{input_failed:0,inference_failed:0,inference_timeout:0,invalid_analysis:0,persistence_failed:0,attempt_limit:0,unknown:0},ready_pending:0,delayed_pending:0,expired_leases:0,retried_jobs:0,oldest_active_age_seconds:null,inference_samples:0,average_inference_ms:null,max_inference_ms:null});
 });
 
 const corrected = {sentiment:'positive',category:'usability',summary:'Reviewed by an analyst.',reason:'The report was misunderstood.'};
