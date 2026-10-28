@@ -254,3 +254,12 @@ labels; only legacy reports without an input hash fall back to source labels.
 Category follows the same precedence in details and insight inputs. Recent and
 history queries break timestamp ties by descending report ID. This makes views
 consistent; it does not establish model accuracy or semantic duplicate detection.
+
+### Processing error privacy
+
+Triage and processing-health responses expose only fixed processing error codes.
+Unrecognized legacy values (including raw provider messages) become `unknown`;
+a missing error remains null in triage. Stored history is unchanged. This protects
+response payloads as well as rendered text: escaping HTML alone would not prevent
+sensitive text from appearing in the API. Operators still need to protect database
+access and backups containing historical values. No deployed data was scrubbed.

@@ -115,6 +115,20 @@ it('rejects non-string sentiment values rather than coercing model output', () =
 });
 
 
+it('exposes only fixed processing error codes in triage, preserving stored history', async () => {
+  for (const stored of [null, 'inference_timeout', 'invalid_analysis', 'persistence_failed', 'input_failed', 'inference_failed', 'attempt_limit', 'processing_failed', '', 'Bearer private-provider-token']) {
+    await env.DB.prepare('UPDATE processing_jobs SET last_error=? WHERE feedback_id=?').bind(stored,id).run();
+    const response = await SELF.fetch('https://example.com/api/triage',{headers:auth});
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
+    const rows = await response.json<Array<{id:number;last_error:string|null}>>();
+    const expected = stored === null ? null : ['processing_failed', '', 'Bearer private-provider-token'].includes(stored) ? 'unknown' : stored;
+    expect(rows.find(row => row.id === id)?.last_error).toBe(expected);
+    expect(await env.DB.prepare('SELECT last_error FROM processing_jobs WHERE feedback_id=?').bind(id).first('last_error')).toBe(stored);
+  }
+  expect((await SELF.fetch('https://example.com/api/triage')).status).toBe(401);
+});
+
 it('counts only unresolved latest failures and redacts unrecognized error text', async () => {
   await env.DB.prepare("UPDATE processing_jobs SET status='pending',last_error='inference_timeout' WHERE feedback_id=?").bind(id).run();
   for (const [offset,status,error] of [[1,'failed','invalid_analysis'],[2,'processing','persistence_failed'],[3,'completed','inference_timeout'],[4,'failed','secret provider payload']] as const) {

@@ -1,6 +1,6 @@
 import { MODEL, PROMPT_VERSION } from './processing.ts';
 
-const FAILURE_CODES = ['input_failed', 'inference_failed', 'inference_timeout', 'invalid_analysis', 'persistence_failed', 'attempt_limit', 'unknown'] as const;
+import { FAILURE_CODES } from './processing_errors.ts';
 type FailureCounts = Record<typeof FAILURE_CODES[number], number>;
 
 export interface ProcessingHealth {
