@@ -1,5 +1,6 @@
 import { MODEL, PROMPT_VERSION, validateAnalysis } from './processing.ts';
 import { processingHealth } from './processing_health.ts';
+import { publicProcessingError } from './processing_errors.ts';
 import type { Env } from './index';
 
 const json = (data: unknown, status = 200) => Response.json(data, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -71,7 +72,8 @@ export async function workflow(request: Request, env: Env): Promise<Response | n
         c.revision=(SELECT MAX(revision) FROM analysis_corrections WHERE feedback_id=f.id AND input_hash=f.request_hash)
       WHERE (? IS NULL OR f.id < ?)
       ORDER BY f.id DESC LIMIT 100`).bind(MODEL,PROMPT_VERSION,cursor === null ? null : Number(cursor),cursor === null ? null : Number(cursor)).all();
-    return json(rows.results);
+    // Legacy rows may contain raw provider messages. Never expose them to clients.
+    return json(rows.results.map(row => ({ ...row, last_error: publicProcessingError(row.last_error) })));
   }
   const correction = path.match(/^\/api\/feedback\/([1-9][0-9]*)\/corrections$/);
   if (correction && (request.method === 'POST' || request.method === 'GET')) {
