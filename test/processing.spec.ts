@@ -401,3 +401,65 @@ it('invalidates insight snapshots when current model labels or corrections chang
   expect(inputs[0][0]).toMatchObject({id,sentiment:null,category:null});
   expect(await env.DB.prepare('SELECT sentiment FROM feedback WHERE id=?').bind(id).first('sentiment')).toBe(null);
 });
+
+it('suggests only candidate IDs without changing report or job state', async () => {
+  await env.DB.prepare("INSERT INTO feedback(id,title,description,source,request_hash) VALUES (900,'Search delay','Results arrive late','test','candidate-version')").run();
+  let calls = 0;
+  const bindings = {...env, AI:{run:async()=>{calls++;return {response:JSON.stringify({duplicate_ids:[900]})};}} as unknown as typeof env.AI};
+  const request = () => new Request(`https://example.com/api/feedback/${id}/duplicates`,{method:'POST',headers:auth});
+  const response = await worker.fetch(request(),bindings);
+  expect(response.status).toBe(200);
+  expect(response.headers.get('Cache-Control')).toBe('no-store');
+  const body = await response.json<{suggestions:Array<{id:number}>;candidate_count:number}>();
+  expect(body.suggestions.map(row=>row.id)).toEqual([900]);
+  expect(body.candidate_count).toBe(1);
+  expect(calls).toBe(1);
+  expect((await job())?.status).toBe('pending');
+  expect(await env.DB.prepare('SELECT resolved_at FROM feedback WHERE id=?').bind(id).first('resolved_at')).toBe(null);
+});
+
+it('rejects fabricated, repeated and malformed duplicate suggestions without leaking output', async () => {
+  await env.DB.prepare("INSERT INTO feedback(id,title,description,source,request_hash) VALUES (900,'Other','Body','test','v1')").run();
+  for (const value of [null, {}, {response:'private provider output'}, {response:'x'.repeat(4097)},
+    ...[[901],[id],[900,900],['900'],[900.5],null].map(duplicate_ids=>({response:JSON.stringify({duplicate_ids})}))]) {
+    const bindings = {...env, AI:{run:async()=>value} as unknown as typeof env.AI};
+    const response = await worker.fetch(new Request(`https://example.com/api/feedback/${id}/duplicates`,{method:'POST',headers:auth}),bindings);
+    expect(response.status).toBe(502);
+    expect(await response.text()).not.toContain('private provider output');
+  }
+  const bindings = {...env, AI:{run:async()=>{throw new Error('private provider token');}} as unknown as typeof env.AI};
+  const response = await worker.fetch(new Request(`https://example.com/api/feedback/${id}/duplicates`,{method:'POST',headers:auth}),bindings);
+  expect(response.status).toBe(503);
+  expect(await response.text()).not.toContain('private provider token');
+});
+
+it('bounds duplicate comparison inputs and rejects a changed snapshot', async () => {
+  for(let n=100;n<125;n++) await env.DB.prepare('INSERT INTO feedback(id,title,description,source,request_hash) VALUES (?,?,?,?,?)').bind(n,'Title','x'.repeat(2000),'test','v'+n).run();
+  const tooMany = {...env, AI:{run:async()=>({response:JSON.stringify({duplicate_ids:[124,123,122,121,120,119]})})} as unknown as typeof env.AI};
+  expect((await worker.fetch(new Request(`https://example.com/api/feedback/${id}/duplicates`,{method:'POST',headers:auth}),tooMany)).status).toBe(502);
+  let observed: {candidates:Array<{id:number;description:string}>} | undefined;
+  const bindings = {...env, AI:{run:async(_model:unknown,args:{messages:Array<{content:string}>})=>{
+    observed=JSON.parse(args.messages[1].content);
+    await env.DB.prepare("UPDATE feedback SET request_hash='changed' WHERE id=124").run();
+    return {response:JSON.stringify({duplicate_ids:[124]})};
+  }} as unknown as typeof env.AI};
+  const response = await worker.fetch(new Request(`https://example.com/api/feedback/${id}/duplicates`,{method:'POST',headers:auth}),bindings);
+  expect(observed?.candidates.map(row=>row.id)).toEqual(Array.from({length:20},(_,n)=>124-n));
+  expect(observed?.candidates.every(row=>row.description.length===1000)).toBe(true);
+  expect(response.status).toBe(409);
+});
+
+it('skips inference for no candidates and rejects unauthenticated or unversioned requests', async () => {
+  let calls=0;
+  const bindings = {...env, AI:{run:async()=>{calls++;throw new Error('must not call');}} as unknown as typeof env.AI};
+  const call = (path:string,headers:Record<string,string>=auth) => worker.fetch(new Request('https://example.com'+path,{method:'POST',headers}),bindings);
+  const response = await call(`/api/feedback/${id}/duplicates`);
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({suggestions:[],candidate_count:0});
+  expect((await call(`/api/feedback/${id}/duplicates`,{})).status).toBe(401);
+  expect((await call('/api/feedback/999999/duplicates')).status).toBe(404);
+  expect((await call('/api/feedback/9007199254740992/duplicates')).status).toBe(400);
+  await env.DB.prepare('UPDATE feedback SET request_hash=NULL WHERE id=?').bind(id).run();
+  expect((await call(`/api/feedback/${id}/duplicates`)).status).toBe(409);
+  expect(calls).toBe(0);
+});

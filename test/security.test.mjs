@@ -223,3 +223,25 @@ test('stats refresh clears stale values on HTTP, network and JSON failures', asy
     assert.equal(elements.get('stat-total').textContent,9);
   }
 });
+
+test('duplicate review renders untrusted titles as text and recovers after request failure', async () => {
+  const {triageHTML} = await import('../src/triage.ts');
+  const element = () => ({children:[],textContent:'',disabled:false,setAttribute(){},append(...children){this.children.push(...children);}});
+  let fail=false;
+  const context = vm.createContext({document:{createElement:element,getElementById:element},fetch:async(path,options)=>{
+    assert.equal(path,'/api/feedback/7/duplicates');
+    assert.equal(options.method,'POST');
+    return {ok:!fail,status:503,json:async()=>fail ? {error:'Retry later'} : {candidate_count:2,suggestions:[{id:9,title:'<img src=x onerror=alert(1)>'}]}};
+  }});
+  const script=triageHTML.match(/<script>([\s\S]*?)<\/script>/)[1];
+  vm.runInContext(script.slice(0,script.indexOf('let pending = null;')),context);
+  const section=vm.runInContext('duplicateReview({id:7})',context);
+  await section.children[0].onclick();
+  assert.match(section.children[1].textContent, /#9 <img src=x onerror=alert\(1\)>/);
+  assert.match(section.children[1].textContent, /no reports were merged/);
+  assert.equal(section.children[1].children.length,0);
+  fail=true;
+  await section.children[0].onclick();
+  assert.equal(section.children[1].textContent,'Retry later');
+  assert.equal(section.children[0].disabled,false);
+});
