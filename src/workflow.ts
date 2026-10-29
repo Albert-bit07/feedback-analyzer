@@ -1,6 +1,7 @@
 import { MODEL, PROMPT_VERSION, validateAnalysis } from './processing.ts';
 import { processingHealth } from './processing_health.ts';
 import { publicProcessingError } from './processing_errors.ts';
+import { suggestDuplicates } from './duplicates.ts';
 import type { Env } from './index';
 
 const json = (data: unknown, status = 200) => Response.json(data, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -36,6 +37,11 @@ function field(body: Record<string, unknown>, name: string, max: number): string
 
 export async function workflow(request: Request, env: Env): Promise<Response | null> {
   const path = new URL(request.url).pathname;
+  const duplicates = path.match(/^\/api\/feedback\/([1-9][0-9]*)\/duplicates$/);
+  if (duplicates && request.method === 'POST') {
+    const id = Number(duplicates[1]);
+    return Number.isSafeInteger(id) ? suggestDuplicates(id,env) : json({error:'Invalid feedback ID'},400);
+  }
   if (path === '/api/feedback' && request.method === 'POST') {
     let title: string, description: string, source: string;
     const key = request.headers.get('Idempotency-Key') ?? '';

@@ -263,3 +263,30 @@ a missing error remains null in triage. Stored history is unchanged. This protec
 response payloads as well as rendered text: escaping HTML alone would not prevent
 sensitive text from appearing in the API. Operators still need to protect database
 access and backups containing historical values. No deployed data was scrubbed.
+
+## Duplicate suggestions for human review
+
+In `/triage`, **Suggest related reports** sends an authenticated
+`POST /api/feedback/:id/duplicates`. It uses the existing language model to
+compare the selected report against the newest 20 other versioned reports,
+including resolved reports. Only the title and first 1,000 description characters
+of each report enter the comparison. Legacy rows without an input hash are
+excluded. No candidate means no model call.
+
+The model may suggest up to five candidate IDs. The server rejects malformed,
+repeated, invented or out-of-set IDs, returns only database-backed titles, and
+checks every compared input hash again before returning. A changed/deleted input
+produces 409; invalid model output produces 502; inference failure or the
+20-second timeout produces 503. Responses are uncached and include the model,
+prompt version (`duplicate-review-v1`), input hashes and comparison limits.
+
+Suggestions are ephemeral and advisory: they do not merge reports, change
+resolution state or overwrite human corrections. Model mistakes and prompt
+injection can still cause poor suggestions even though response IDs are validated.
+Review the original reports before deciding what to resolve. An empty result does
+not establish uniqueness: older reports and truncated text were not fully searched.
+This is bounded language-model comparison, not an embedding index or a calibrated
+similarity score. Tests cover the workflow with controlled inference, not real
+semantic precision/recall; labeled evaluation remains outstanding. Each click can
+incur one inference call, with no cross-client rate limit or provider cancellation
+guarantee after timeout. Shared analyst authentication remains required.

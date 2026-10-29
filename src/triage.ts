@@ -17,6 +17,22 @@ async function api(path, options) {
   }
   return response.json();
 }
+function duplicateReview(row) {
+  const section = document.createElement('section');
+  const button = document.createElement('button'); button.textContent = 'Suggest related reports';
+  const result = document.createElement('p'); result.setAttribute('role','status');
+  button.onclick = async () => {
+    button.disabled = true; result.textContent = 'Comparing recent reports…';
+    try {
+      const data = await api('/api/feedback/' + row.id + '/duplicates',{method:'POST'});
+      result.textContent = 'Model suggestions from ' + data.candidate_count + ' recent reports (first 1,000 description characters). Review manually; no reports were merged. ' +
+        (data.suggestions.length ? data.suggestions.map(item=>'#' + item.id + ' ' + item.title).join('; ') : 'No suggestions; this does not establish that the report is unique.');
+    } catch (error) { result.textContent = error.message; }
+    finally { button.disabled = false; }
+  };
+  section.append(button,result);
+  return section;
+}
 function correctionEditor(row) {
   const section = document.createElement('details');
   const heading = document.createElement('summary'); heading.textContent = 'Review or correct analysis';
@@ -119,7 +135,7 @@ async function renderPage() {
       reviewed.textContent = 'Analyst correction (revision ' + row.correction_revision + '): ' + row.correction_summary + ' · ' + row.correction_sentiment + ' · ' + row.correction_category + ' · Reason: ' + row.correction_reason;
       card.append(reviewed);
     }
-    if (row.input_hash) card.append(correctionEditor(row));
+    if (row.input_hash) card.append(correctionEditor(row),duplicateReview(row));
     if (row.last_error) {
       const error = document.createElement('small'); error.textContent = 'Processing error: ' + row.last_error;
       card.append(error);
