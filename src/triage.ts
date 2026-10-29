@@ -41,6 +41,7 @@ function correctionEditor(row) {
   for (const [name, label, limit] of [['sentiment','Sentiment',0],['category','Category',80],['summary','Summary',1000],['reason','Reason for correction',500]]) {
     const wrapper = document.createElement('label'); wrapper.textContent = label;
     const input = document.createElement(name === 'sentiment' ? 'select' : 'textarea');
+    input.setAttribute('aria-label', label);
     if (name === 'sentiment') {
       for (const value of ['positive','neutral','negative']) {
         const option = document.createElement('option'); option.value = value; option.textContent = value; input.append(option);

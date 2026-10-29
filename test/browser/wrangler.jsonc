@@ -1,0 +1,13 @@
+{
+  "name": "feedback-browser-fixture",
+  "main": "worker.ts",
+  "compatibility_date": "2025-09-27",
+  "vars": { "DASHBOARD_PASSWORD": "browser-test-only-password" },
+  "d1_databases": [{
+    "binding": "DB",
+    "database_name": "browser-feedback",
+    "database_id": "00000000-0000-0000-0000-000000000001",
+    "migrations_dir": "../../migrations"
+  }],
+  "kv_namespaces": [{ "binding": "CACHE", "id": "browser-test-cache" }]
+}
