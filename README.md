@@ -290,3 +290,27 @@ similarity score. Tests cover the workflow with controlled inference, not real
 semantic precision/recall; labeled evaluation remains outstanding. Each click can
 incur one inference call, with no cross-client rate limit or provider cancellation
 guarantee after timeout. Shared analyst authentication remains required.
+## Browser integration checks
+
+`npm run test:browser` runs Chromium against the actual triage page and Worker
+handlers, with a fresh local D1/KV state directory. The test-only configuration
+uses no remote bindings or production database identifiers. Its separate Worker
+entrypoint supplies deterministic AI responses and an authenticated processing
+trigger; the production entrypoint does not import either test control.
+
+```bash
+npm ci
+npx playwright install --with-deps chromium
+npm run test:browser
+```
+
+The suite covers submission, durable pending work, controlled processing,
+human correction/history, resolve/reopen, HTML-like titles rendered as text,
+and retry after a response is lost after the server commits. It also checks the
+duplicate-review UI with controlled model output. The server wrapper applies
+the real migrations locally, owns port 18787, and removes temporary state on
+shutdown. Playwright refuses to reuse an existing server.
+
+These checks do not measure model quality, exercise Cloudflare production, or
+cover other browsers/devices. A failed browser download or local Worker startup
+is a blocked test, not a pass. CI installs Chromium and executes this suite.

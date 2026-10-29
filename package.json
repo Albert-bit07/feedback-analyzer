@@ -10,10 +10,12 @@
     "cf-typegen": "wrangler types",
     "test:security": "node --test test/*.test.mjs",
     "typecheck": "tsc --noEmit && tsc -p test/tsconfig.json --noEmit",
-    "evaluate": "node scripts/evaluate.mjs"
+    "evaluate": "node scripts/evaluate.mjs",
+    "test:browser": "playwright test"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "^1.4.7",
+    "@playwright/test": "1.64.1",
     "typescript": "^5.5.2",
     "vitest": "^4.1.12",
     "wrangler": "^4.152.0"

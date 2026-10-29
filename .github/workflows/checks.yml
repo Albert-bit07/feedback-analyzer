@@ -15,4 +15,6 @@ jobs:
       - run: npm run typecheck
       - run: npm run test:security
       - run: npm test -- --run
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:browser
       - run: npm audit --audit-level=moderate
