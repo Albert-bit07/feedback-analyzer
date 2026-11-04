@@ -336,3 +336,40 @@ metrics. They describe individual requests, not aggregate hit rates, token usage
 cost or an operational freshness SLO. Generation age does not measure source-data
 age, and the insight input remains limited to the twenty most recent reports in
 the last seven days. Concurrent cache misses may invoke inference independently.
+
+
+### Aggregate insight diagnostics
+
+Authenticated insight requests emit one JSON console message with event
+`insight_request_v1`. Fixed fields record success/failure, cache outcome, elapsed
+handler milliseconds and generation age for successful cache hits. No feedback,
+IDs, credentials, URLs, model output or error text enters these messages. Logger
+failure leaves the response or original exception intact. Rejected authentication
+and requests terminated before completion are not counted.
+
+Extract these JSON messages from your existing logs into a JSONL file, then run:
+
+```bash
+node scripts/insight-report.mjs < insight-events.jsonl > insight-report.json
+```
+
+The report includes success/failure counts, cache outcomes, hit fraction
+(`hits / all supplied request events`), average/max handler latency and average/max
+cached generation age, with sample counts. Empty or missing samples produce null
+metrics. Read hit fraction together with age, failures and the processing backlog.
+Unknown cache outcomes remain in the denominator. Durations cover the insight
+handler, including storage; they are not model-only inference durations.
+
+The reader caps input at 10 MiB, 50,000 records and 4,096 characters per record;
+invalid or mixed log schemas fail without a partial report or echoed input.
+It creates no server-side history or telemetry database. No logging configuration
+or retention setting is changed: collection, sampling, delivery and retention
+remain governed by the operator's existing log service. Keep only the fixed-field
+JSONL export needed for a reporting window, then remove it per your retention
+policy. The script writes only the requested report to stdout.
+
+These are observed-event statistics, not billing-grade counters. Sampling,
+missing/duplicate messages and differing reporting windows affect results; the
+format intentionally has no request identifier for deduplication. A high cache
+hit fraction does not prove fresh source data. Neither token consumption, monetary
+cost nor relevance is measured. No production collection or load result is claimed.
