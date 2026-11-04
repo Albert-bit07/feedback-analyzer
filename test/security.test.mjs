@@ -245,3 +245,68 @@ test('duplicate review renders untrusted titles as text and recovers after reque
   assert.equal(section.children[1].textContent,'Retry later');
   assert.equal(section.children[0].disabled,false);
 });
+
+test('insights reject malformed provider output without caching it', async () => {
+  for (const value of [null, {}, {response: {}}, {response: '  '}, {response: 'x'.repeat(8193)}]) {
+    let writes = 0;
+    const response = await worker.fetch(request('/api/ai-insights'), {
+      ...credentials,
+      DB: {prepare: () => ({bind() {return this;}, all: async () => ({results: []})})},
+      CACHE: {get: async () => null, put: async () => {writes++;}},
+      AI: {run: async () => value},
+    });
+    assert.equal(response.status,503);
+    assert.equal(writes,0);
+    assert.equal((await response.json()).insights,'AI analysis temporarily unavailable.');
+  }
+});
+
+test('cache outages do not discard valid insights and hits report age', async () => {
+  let cached;
+  let calls = 0;
+  let readFails = true, writeFails = true;
+  const bindings = {
+    ...credentials,
+    DB: {prepare: () => ({bind() {return this;}, all: async () => ({results: []})})},
+    CACHE: {get: async () => {if(readFails) throw Error('private cache'); return cached;},
+      put: async (_key,value) => {if(writeFails) throw Error('private cache'); cached=value;}},
+    AI: {run: async () => {calls++;return {response:'Controlled insight'};}},
+  };
+  const fetchInsights = () => worker.fetch(request('/api/ai-insights'),bindings);
+  const unavailable = await fetchInsights();
+  assert.equal(unavailable.status,200);
+  assert.equal((await unavailable.json()).insights,'Controlled insight');
+  assert.equal(unavailable.headers.get('X-Insights-Cache'),'unavailable');
+  readFails = writeFails = false;
+  const miss = await fetchInsights();
+  assert.equal(miss.headers.get('X-Insights-Cache'),'miss');
+  const hit = await fetchInsights();
+  assert.equal(hit.headers.get('X-Insights-Cache'),'hit');
+  assert.ok(Number(hit.headers.get('X-Insights-Age-Seconds')) >= 0);
+  assert.ok(Number(hit.headers.get('X-Insights-Age-Seconds')) < 600);
+  assert.equal(calls,2);
+  for (const bad of ['invalid json', JSON.stringify({insights:{},generated_at:new Date().toISOString()}),
+    JSON.stringify({insights:'Old',generated_at:new Date(Date.now()-601000).toISOString()}),
+    JSON.stringify({insights:'Future',generated_at:new Date(Date.now()+60000).toISOString()})]) {
+    cached=bad;
+    assert.equal((await fetchInsights()).headers.get('X-Insights-Cache'),'miss');
+  }
+  assert.equal(calls,6);
+});
+
+
+test('insight timeout returns unavailable and late output cannot populate cache', {timeout:25000}, async () => {
+  let finish;
+  let writes = 0;
+  const pending = new Promise(resolve => {finish=resolve;});
+  const response = await worker.fetch(request('/api/ai-insights'), {
+    ...credentials,
+    DB: {prepare: () => ({bind() {return this;}, all: async () => ({results: []})})},
+    CACHE: {get: async () => null, put: async () => {writes++;}},
+    AI: {run: () => pending},
+  });
+  assert.equal(response.status,503);
+  finish({response:'Late result'});
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(writes,0);
+});

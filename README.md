@@ -314,3 +314,25 @@ shutdown. Playwright refuses to reuse an existing server.
 These checks do not measure model quality, exercise Cloudflare production, or
 cover other browsers/devices. A failed browser download or local Worker startup
 is a blocked test, not a pass. CI installs Chromium and executes this suite.
+
+
+### Insight cache diagnostics and failure behavior
+
+`GET /api/ai-insights` returns `X-Insights-Cache: hit`, `miss` or `unavailable`.
+Successful responses include `X-Insights-Age-Seconds`: the age since generation
+for a hit, or zero for a newly generated result. Cache entries must match the
+current input fingerprint, contain a nonempty string of at most 8,192 characters,
+and be younger than ten minutes. Invalid or future-dated entries are misses.
+A rejected cache read/write does not discard a valid model result.
+
+Inference has a 20-second wait limit. Provider failures, timeouts and malformed
+output return a generic 503 and are never cached. Timing out does not cancel
+provider work or guarantee reduced billing; a late response cannot write the
+cache. Storage calls are still subject to their platform limits. All responses
+remain `Cache-Control: no-store` for browser/shared HTTP caches.
+
+Inspect these headers alongside the existing processing backlog and latency
+metrics. They describe individual requests, not aggregate hit rates, token usage,
+cost or an operational freshness SLO. Generation age does not measure source-data
+age, and the insight input remains limited to the twenty most recent reports in
+the last seven days. Concurrent cache misses may invoke inference independently.
