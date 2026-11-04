@@ -1,4 +1,4 @@
-import { MODEL, PROMPT_VERSION, processPending } from './processing.ts';
+import { MODEL, PROMPT_VERSION, processPending, withTimeout } from './processing.ts';
 import { authorize } from './access.ts';
 import { workflow } from './workflow.ts';
 import { triageHTML } from './triage.ts';
@@ -278,15 +278,27 @@ async function getAIInsights(env: Env, corsHeaders: Record<string, string>): Pro
     const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(feedbackText));
     const fingerprint = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
     const cacheKey = `ai-insights:llama3-8b:triage-v2:${fingerprint}`;
-    const cached = await env.CACHE.get(cacheKey);
-    if (cached) {
-        return new Response(cached, {
-            headers: { 'Content-Type': 'application/json', ...corsHeaders },
-        });
-    }
+    let cacheState = 'miss';
+    try {
+        const cached = await env.CACHE.get(cacheKey);
+        if (cached && cached.length <= 60000) {
+            try {
+                const value = JSON.parse(cached);
+                const generated = typeof value?.generated_at === 'string' ? Date.parse(value.generated_at) : NaN;
+                const age = Date.now() - generated;
+                if (typeof value?.insights === 'string' && value.insights.trim() &&
+                    value.insights.length <= 8192 && age >= 0 && age < 600000) {
+                    return new Response(cached, {headers: {
+                        'Content-Type': 'application/json', ...corsHeaders,
+                        'X-Insights-Cache': 'hit', 'X-Insights-Age-Seconds': String(Math.floor(age / 1000)),
+                    }});
+                }
+            } catch { /* An invalid entry is a miss, never a successful analysis. */ }
+        }
+    } catch { cacheState = 'unavailable'; }
 
 	try {
-		const aiResponse = await env.AI.run('@cf/meta/llama-3-8b-instruct', {
+		const aiResponse = await withTimeout(env.AI.run('@cf/meta/llama-3-8b-instruct', {
 			messages: [
 				{
 					role: 'system',
@@ -297,18 +309,23 @@ async function getAIInsights(env: Env, corsHeaders: Record<string, string>): Pro
 					content: `Analyze this customer feedback and provide 3 key insights:\n\n${feedbackText}`,
 				},
 			],
-		});
+		}), 20000);
+        if (!aiResponse || typeof aiResponse !== 'object' || !('response' in aiResponse) ||
+            typeof aiResponse.response !== 'string' || !aiResponse.response.trim() || aiResponse.response.length > 8192) {
+            throw new Error('Invalid insight output');
+        }
 
 		const insights = {
-			insights: (aiResponse as any).response || 'No insights available at this time.',
+			insights: aiResponse.response.trim(),
 			generated_at: new Date().toISOString(),
 		};
 
 		const response = JSON.stringify(insights);
-		await env.CACHE.put(cacheKey, response, { expirationTtl: 600 }); // Cache for 10 minutes
+		try { await env.CACHE.put(cacheKey, response, { expirationTtl: 600 }); }
+        catch { cacheState = 'unavailable'; }
 
 		return new Response(response, {
-			headers: { 'Content-Type': 'application/json', ...corsHeaders },
+			headers: { 'Content-Type': 'application/json', ...corsHeaders, 'X-Insights-Cache': cacheState, 'X-Insights-Age-Seconds': '0' },
 		});
 	} catch (error) {
 		return new Response(
@@ -317,7 +334,8 @@ async function getAIInsights(env: Env, corsHeaders: Record<string, string>): Pro
 				generated_at: new Date().toISOString(),
 			}),
 			{
-				headers: { 'Content-Type': 'application/json', ...corsHeaders },
+				status: 503,
+                headers: { 'Content-Type': 'application/json', ...corsHeaders, 'X-Insights-Cache': cacheState },
 			}
 		);
 	}
