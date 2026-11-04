@@ -1,3 +1,4 @@
+import { observeInsights } from './insight_metrics.ts';
 import { MODEL, PROMPT_VERSION, processPending, withTimeout } from './processing.ts';
 import { authorize } from './access.ts';
 import { workflow } from './workflow.ts';
@@ -79,7 +80,7 @@ export default {
 			}
 
 			if (url.pathname === '/api/ai-insights') {
-				return await getAIInsights(env, corsHeaders);
+				return await observeInsights(() => getAIInsights(env, corsHeaders));
 			}
 
 			if (url.pathname.startsWith('/api/feedback/')) {
